@@ -107,6 +107,15 @@ final class DocumentedConstantsTests: XCTestCase {
         return text
     }
 
+    /// docs/formats.md quotes the lead a software-path live join keeps behind the newest media.
+    func testSoftwareLiveJoinLeadMatchesDocumentation() throws {
+        XCTAssertEqual(SoftwareLiveJoinPolicy.leadSeconds, 4)
+        XCTAssertEqual(SoftwareLiveJoinPolicy.minimumSettleSeconds, 0.3)
+        XCTAssertEqual(SoftwareLiveJoinPolicy.maximumSettleSeconds, 1.5)
+        XCTAssertEqual(SoftwareLiveJoinPolicy.calmWindowSeconds, 0.25)
+        assertDocumented("`SoftwareLiveJoinPolicy.leadSeconds` (4 s) behind the newest media", try documentation())
+    }
+
     // MARK: - Documentation corpus
 
     private static var repoRoot: URL {

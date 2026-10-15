@@ -58,6 +58,14 @@ jobs:
         with:
           ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
 
+      # The packaging script follows the workflow, not the tag: the sources it builds are the tag's,
+      # but a re-run for an older tag needs today's script on today's runner (7.37.0's still looked
+      # for the binary where Swift 6.2 put it).
+      - name: Packaging script from the workflow's commit
+        run: |
+          git fetch --no-tags --depth=1 origin ${{ github.sha }}
+          git checkout FETCH_HEAD -- Examples/DemoPlayerMac/Scripts/build-dmg.sh
+
       - name: Show toolchain
         run: xcodebuild -version
 

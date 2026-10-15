@@ -130,6 +130,11 @@ final class SoftwarePlaybackHost {
     /// upgrade the published `videoFormat` from `.hdr10` → `.hdr10Plus`.
     nonisolated(unsafe) var onFirstHDR10PlusDetected: (@Sendable () -> Void)?
 
+    /// Fires (off-main) when the demux loop re-anchors the clock at a first sample past the load anchor,
+    /// with the session zero it resolved. Hooked by `AetherEngine` to republish `mediaChapters` from the
+    /// clock's real zero.
+    nonisolated(unsafe) var onClockSessionZero: (@Sendable (Double) -> Void)?
+
     /// AE#658: forwarded from the video decoder, off-main.
     nonisolated(unsafe) var onDecodedVideoFormat: (@Sendable (DecodedVideoFormat) -> Void)?
 
@@ -2226,6 +2231,7 @@ final class SoftwarePlaybackHost {
         // the clock at a first-sample PTS far past the anchor (mid-stream-joined source).
         let onClockAnchored: @Sendable (Double) -> Void = { [weak self] zero in
             self?.clockSessionZero = zero
+            self?.onClockSessionZero?(zero)
         }
 
         if liveSession, let ring {

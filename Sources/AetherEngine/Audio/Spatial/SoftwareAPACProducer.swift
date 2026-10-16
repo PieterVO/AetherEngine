@@ -12,7 +12,7 @@ import AetherLibavutil
 /// The bridge stamps packet k of an encoder run at the run's anchor plus k * 1024, priming packets
 /// included, because AVFoundation's HLS path presents an APAC packet's audio `encoderLeadingFrames`
 /// before its timestamp. A sample buffer carries the presentation time itself, so the same shift is
-/// applied here (see `buffers(from:)` for what is and is not measured about it).
+/// applied here (see `buffers(from:)` for the measurement).
 @available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
 final class SoftwareAPACProducer: SoftwareAudioProducing, @unchecked Sendable {
 
@@ -59,10 +59,11 @@ final class SoftwareAPACProducer: SoftwareAudioProducing, @unchecked Sendable {
     /// Stamps the bridge's packets and frees them. The bridge stamps packet k of an encoder run at the
     /// run's anchor plus k * 1024, and the shift below puts the first content frame on the source position.
     ///
-    /// UNMEASURED: whether `AVSampleBufferAudioRenderer` removes the priming frames itself the way
-    /// AVFoundation's HLS path does is not established; a Mac capture (click onset of an APAC stream
-    /// against a PCM reference on one synchronizer) is pending. If the renderer already applies the
-    /// priming, this `- leading` double-shifts and the audio runs about 43 ms early.
+    /// Measured on macOS: with the packets stamped at the PTS minus the encoder's priming frames
+    /// (2048 at 48 kHz), the APAC output lines up with the PCM decode of the same track on one
+    /// synchronizer at 0.00 ms; stamped at the PTS unshifted it is off by +42.69 ms. So
+    /// `AVSampleBufferAudioRenderer` does not remove the priming itself, and the `- leading` below is
+    /// right. Not measured on tvOS.
     private func buffers(from packets: [UnsafeMutablePointer<AVPacket>]) -> [CMSampleBuffer] {
         let leading = Int64(bridge.encoderLeadingFrames)
         var buffers: [CMSampleBuffer] = []

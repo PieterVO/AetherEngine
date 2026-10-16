@@ -71,7 +71,10 @@ extension SoftwarePlaybackHost {
         case .apac(let layout):
             guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *) else { return try pcm() }
             let producer = await makeAPACProducer(demuxer: dem, stream: stream, streamIndex: streamIndex, layout: layout)
-            try stillLive()
+            if let producer, stopRequested || Task.isCancelled {
+                producer.close()
+                throw CancellationError()
+            }
             if let producer { return (producer, route) }
             return try pcm()
         }

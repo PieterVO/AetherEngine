@@ -386,7 +386,7 @@ Subtitle cues land in raw source PTS; render the overlay against `player.sourceT
 Install via Swift Package Manager:
 
 ```swift
-.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.37.0")
+.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.38.0")
 ```
 
 Three samples ship in `Examples/`:
@@ -633,10 +633,10 @@ Browse all of this as a searchable site at **[aetherengine.superuser404.de](http
 AetherEngine uses [Semantic Versioning](https://semver.org). The public API surface, every `public` declaration in `Sources/AetherEngine/`, is the stability contract. **Major** removes / renames public symbols or breaks adopters; **Minor** adds public API or codec / format support; **Patch** fixes bugs with no public API change. `internal` types are not part of the contract.
 
 ```swift
-.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.37.0")
+.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.38.0")
 ```
 
-Pin to `.upToNextMinor(from: "7.37.0")` for stricter teams that prefer to opt into minor bumps explicitly.
+Pin to `.upToNextMinor(from: "7.38.0")` for stricter teams that prefer to opt into minor bumps explicitly.
 
 ## Requirements
 
@@ -665,7 +665,7 @@ The two object-audio decoder libraries are behind package traits, both on by def
 A host that cannot ship one of the libraries turns its trait off; the library is then neither linked nor resolved (it drops out of the host's `Package.resolved`), and the session log says why the codec stayed on the bridge (`built without the TrueHDObjectAudio trait`). In a package manifest, list the traits to keep (an empty list keeps none):
 
 ```swift
-.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.37.0", traits: [])
+.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.38.0", traits: [])
 ```
 
 In an Xcode project, the package's traits are set where the package dependency is listed (XcodeGen: `traits: []` on the package). `swift build --disable-default-traits` builds the engine itself that way.

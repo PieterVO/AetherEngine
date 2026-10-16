@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.38.0] - 2026-10-16
+
 ### Changed
 
 - **A live stream on the software path starts near the newest media.** A continuous live stream over

@@ -23,6 +23,14 @@ the public-API contract.
   still starts from its first packet. The media behind the start stays in the rewind ring.
   `SoftwareLiveJoinPolicy`, `SoftwareLiveJoinPlacementTests`.
 
+### Fixed
+
+- **Profile 7 FEL chroma residual is sampled where the base chroma sits.** With a quarter-resolution
+  enhancement layer (1080p under 4K), the chroma kernel read the enhancement chroma at texel centres,
+  a quarter of an EL chroma texel up and to the left of the co-sited (top-left) chroma location HDR
+  streams use. Base chroma sample n now reads EL texel n / 2, DoViBaker's phase. Same-resolution
+  enhancement layers and luma are unchanged.
+
 ## [7.37.0] - 2026-10-15
 
 ### Added

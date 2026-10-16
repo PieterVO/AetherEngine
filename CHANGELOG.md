@@ -25,6 +25,16 @@ the public-API contract.
 
 ### Fixed
 
+- **A live reconnect whose audio returns first no longer publishes a picture twice.** When the
+  returning connection's audio opened the replay check before the outgoing connection's last pictures
+  left the PES parser (a flagged picture and its unflagged, truncated successor), those pictures were
+  not part of the held boundary. The returning copy of the first one committed the batch, the
+  returning copy of the truncated one arrived after it, and the producer published both and bumped the
+  second DTS, which poisons Apple's reference chain until the next IDR. Measured on one reconnect in
+  three on an Apple TV (AE#747, `superseded=0`). Such a tail now raises the retained video frontier,
+  bounded like a held damaged boundary, so the returning copies land in the verified batch and replace
+  the outgoing ones. `LivePacketReplayGuardTests`.
+
 - **A live stream read off its URL and refused for a while keeps its session.** The continuous
   MPEG-TS form of an IPTV channel is one connection for as long as it plays, and a connection-limited
   panel answers its reconnects with 509 while another device on the account holds the last slot, for

@@ -1974,7 +1974,6 @@ public final class AetherEngine: ObservableObject {
     var softwareCancellables: Set<AnyCancellable> = []
     /// Now-Playing card and remote commands for the software host, which has no AVPlayer to supply them.
     var softwareNowPlaying: SoftwareNowPlayingController?
-    var softwareNowPlayingSink: SystemNowPlayingSink?
 
     /// FFmpeg audio-only host (music). Mutually exclusive with nativeHost/softwareHost; stopInternal tears all down.
     var audioHost: AudioPlaybackHost?
@@ -7185,6 +7184,7 @@ public final class AetherEngine: ObservableObject {
         audioAVPlayerHost?.setExternalMetadata(items)
     }
 
+    #if os(tvOS) || os(iOS)
     /// Opt in to owning the system Now-Playing session on the native VIDEO path.
     ///
     /// Off by default, and that default is load-bearing. The native path is consumed both by hosts
@@ -7198,25 +7198,39 @@ public final class AetherEngine: ObservableObject {
     /// Read when a native host is created, so set it before `load()`. A host preserved across a
     /// native->native reload (issue #15) keeps whatever it was created with; the change takes effect
     /// on the next fresh host.
-    ///
-    /// The software host (the Dolby Vision FEL route) has no AVPlayer for AVKit to own, so the same opt-in
-    /// makes the engine publish its card and serve the system's transport commands itself, on every
-    /// platform; see `SoftwareNowPlayingController`. Read when the software host is built.
     public var ownsVideoNowPlayingSession: Bool = false
 
-    #if os(tvOS) || os(iOS)
-    /// MPNowPlayingSession for the VIDEO path; nil unless `ownsVideoNowPlayingSession` was set before the
-    /// session loaded (also nil with no host). Same contract as `audioNowPlayingSession`: identity metadata
-    /// arrives via `setVideoNowPlayingInfo`. On the native path the host app registers transport commands
-    /// on `remoteCommandCenter`, the session auto-publishes elapsed/rate/duration from the AVPlayer and
-    /// survives native->native reloads with the host (issue #15), so system Now-Playing ownership holds
-    /// across a background pause. On the software path the session is player-less: the engine already
-    /// serves play, pause, toggle, skip and change-position and publishes elapsed/rate itself, so the host
-    /// registers only what it owns (next/previous).
+    /// MPNowPlayingSession for the native VIDEO path; nil unless `ownsVideoNowPlayingSession` was set
+    /// before the session loaded (also nil on the software path and with no host). Same contract as
+    /// `audioNowPlayingSession`: the host app registers transport commands on `remoteCommandCenter`
+    /// and stages identity metadata via `setVideoNowPlayingInfo`; the session auto-publishes
+    /// elapsed/rate/duration from the AVPlayer and survives native->native reloads with the host
+    /// (issue #15), so system Now-Playing ownership holds across a background pause.
     public var videoNowPlayingSession: MPNowPlayingSession? {
-        nativeHost?.nowPlayingSession ?? softwareNowPlayingSink?.nowPlayingSession
+        nativeHost?.nowPlayingSession
     }
 
+    #endif
+
+    /// Opt in to the software host (the Dolby Vision FEL route) publishing its own Now-Playing card and
+    /// answering the system's remote commands. That host has no `AVPlayer`, so neither AVKit nor an
+    /// auto-publishing session exists for it; with this set the engine writes the shared Now-Playing
+    /// info and serves play, pause, toggle, skip and change-position, republishing on seek, pause, speed
+    /// change, stall and end. Identity comes from `setExternalMetadata`, overlaid by
+    /// `setVideoNowPlayingInfo` on iOS and tvOS. Off by default; independent of
+    /// `ownsVideoNowPlayingSession`, so the native path is unaffected. Read when the software host is
+    /// built, so set it before `load()`. A secondary `sharedOutputRole` never takes it.
+    public var ownsSoftwareNowPlaying: Bool = false
+
+    /// Skip distance advertised to, and used for, the software host's remote skip buttons. Read when the
+    /// software host is built.
+    public var remoteSkipInterval: Double = 10
+
+    /// True while the engine is publishing Now-Playing for a software-host session. A host that wants
+    /// next/previous registers them on `MPRemoteCommandCenter.shared()` only while this is true.
+    @Published public internal(set) var softwareNowPlayingActive: Bool = false
+
+    #if os(tvOS) || os(iOS)
     /// Staged per-item Now-Playing dictionary for the native video path. Replayed at host creation
     /// and onto every fresh AVPlayerItem (gate reloads, media fallback, in-place swaps). Caller-managed
     /// like the audio variant: pass an empty dict to clear.

@@ -5,17 +5,17 @@ import MediaPlayer
 
 /// Engine wiring for the software host's Now-Playing card (see `SoftwareNowPlayingController`).
 extension AetherEngine {
-    /// Builds the publisher for a freshly created software host when the app opted in. Same ownership gate
-    /// as the native path: opt-in, primary role only (a secondary never takes Now-Playing, Sodalite#175).
+    /// Builds the publisher for a freshly created software host when the app opted in via
+    /// `ownsSoftwareNowPlaying`. Primary role only: a secondary never takes Now-Playing (Sodalite#175).
     func startSoftwareNowPlaying() {
         stopSoftwareNowPlaying()
-        guard Self.ownsNowPlaying(hostOptIn: ownsVideoNowPlayingSession, role: loadedOptions.sharedOutputRole)
+        guard Self.ownsNowPlaying(hostOptIn: ownsSoftwareNowPlaying, role: loadedOptions.sharedOutputRole)
         else { return }
         let sink = SystemNowPlayingSink()
         let controller = SoftwareNowPlayingController(sink: sink, transport: self)
-        softwareNowPlayingSink = sink
         softwareNowPlaying = controller
-        controller.start()
+        controller.start(skipInterval: remoteSkipInterval)
+        softwareNowPlayingActive = true
         // @Published emits before the stored value changes, so a synchronous read in the sink would see the
         // previous state; the hop lets the controller read the settled values.
         Publishers.CombineLatest4($state, $isBuffering, $duration, $isLive)
@@ -32,7 +32,7 @@ extension AetherEngine {
     func stopSoftwareNowPlaying() {
         softwareNowPlaying?.stop()
         softwareNowPlaying = nil
-        softwareNowPlayingSink = nil
+        if softwareNowPlayingActive { softwareNowPlayingActive = false }
     }
 
     /// Republish after a state-independent change such as a speed change.
@@ -51,11 +51,13 @@ extension AetherEngine {
         let explicit: [String: Any] = [:]
         #endif
         let generation = loadGeneration
+        // Loads finish out of order when metadata is restaged quickly; only the latest ticket applies.
+        let ticket = controller.beginIdentityUpdate()
         Task { @MainActor [weak self] in
             var identity = await SoftwareNowPlayingIdentity.make(from: items)
             identity.merge(explicit) { _, new in new }
             guard let self, self.loadGeneration == generation, self.softwareNowPlaying === controller else { return }
-            controller.setIdentity(identity)
+            controller.setIdentity(identity, ticket: ticket)
         }
     }
 }

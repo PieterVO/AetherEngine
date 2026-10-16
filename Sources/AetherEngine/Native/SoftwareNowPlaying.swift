@@ -37,7 +37,7 @@ extension AetherEngine: SoftwareNowPlayingTransport {}
 /// `SystemNowPlayingSink`; the controller only sees this, so the state mapping needs no MediaPlayer.
 @MainActor
 protocol SoftwareNowPlayingSink: AnyObject {
-    func activate(handler: @escaping @MainActor (SoftwareNowPlayingCommand) -> Void)
+    func activate(skipInterval: Double, handler: @escaping @MainActor (SoftwareNowPlayingCommand) -> Void)
     func setSeekingEnabled(_ enabled: Bool)
     func publish(info: [String: Any]?, playbackState: MPNowPlayingPlaybackState)
     func deactivate()
@@ -45,8 +45,8 @@ protocol SoftwareNowPlayingSink: AnyObject {
 
 /// Pure mapping from engine state to what the system card shows, and from commands to engine actions.
 enum SoftwareNowPlayingPolicy {
-    /// Interval for the skip buttons; matches the engine's own skip step on a remote.
-    static let skipInterval: Double = 10
+    /// How long the clock may stand still while playing before it counts as a stall.
+    static let stallThreshold: TimeInterval = 0.5
 
     /// A published position the system extrapolates from rate; a clock jump beyond this many seconds from
     /// that extrapolation (a seek while paused, a host-driven reposition) is republished.
@@ -65,7 +65,8 @@ enum SoftwareNowPlayingPolicy {
         case .playing: return .playing
         case .paused: return .paused
         case .loading, .seeking: return intendedPlaying ? .playing : .paused
-        case .ended: return .stopped
+        // Ended keeps the card (paused, full bar) until the host reacts; only a torn-down session clears it.
+        case .ended: return .paused
         case .idle, .error: return .stopped
         }
     }
@@ -149,8 +150,8 @@ final class SoftwareNowPlayingController {
         self.uptime = uptime
     }
 
-    func start() {
-        sink.activate { [weak self] command in
+    func start(skipInterval: Double = 10) {
+        sink.activate(skipInterval: skipInterval) { [weak self] command in
             guard let transport = self?.transport else { return }
             SoftwareNowPlayingPolicy.perform(command, on: transport)
         }
@@ -162,22 +163,38 @@ final class SoftwareNowPlayingController {
     }
 
     /// Per-item identity (title, artwork, ...). Empty clears it.
-    func setIdentity(_ info: [String: Any]) {
-        identity = info
-        refresh(requestedRate: nil, isBuffering: false, force: true)
+    /// Identity loads are async and can finish out of order: take a ticket before starting one and pass it
+    /// back, and only the latest ticket's result is applied.
+    func beginIdentityUpdate() -> Int {
+        identitySeq += 1
+        return identitySeq
     }
 
-    /// A state, rate, duration, buffering or live change: always republishes.
-    func refresh(requestedRate: Float?, isBuffering: Bool, force: Bool = true) {
+    func setIdentity(_ info: [String: Any], ticket: Int? = nil) {
+        if let ticket, ticket != identitySeq { return }
+        identity = info
+        refresh(requestedRate: nil, isBuffering: engineBuffering)
+    }
+
+    /// A state, rate, duration, buffering or live change: always republishes. `isBuffering` is the
+    /// engine's own flag; a stall this controller detected from the clock is folded in on top of it.
+    /// `elapsed` lets the clock sink pass the value it was handed, since the transport's own
+    /// `currentTime` still holds the previous one while a @Published change is being delivered.
+    func refresh(requestedRate: Float?, isBuffering: Bool, elapsed: Double? = nil) {
         guard let transport else { return }
         let state = transport.state
         if state == .playing { intendedPlaying = true } else if state == .paused { intendedPlaying = false }
+        if state != .playing { stalled = false }
         let rate = requestedRate ?? lastRequestedRate
         lastRequestedRate = rate
-        lastBuffering = isBuffering
+        engineBuffering = isBuffering
+        let position = elapsed ?? transport.currentTime
+        // A republish is a fresh baseline: a play press must not read the idle time before it as a stall.
+        lastTickElapsed = position
+        lastAdvanceAt = uptime()
         let info = SoftwareNowPlayingPolicy.info(
-            state: state, elapsed: transport.currentTime, duration: transport.duration,
-            isLive: transport.isLive, isBuffering: isBuffering, requestedRate: rate, identity: identity)
+            state: state, elapsed: position, duration: transport.duration,
+            isLive: transport.isLive, isBuffering: isBuffering || stalled, requestedRate: rate, identity: identity)
         sink.setSeekingEnabled(SoftwareNowPlayingPolicy.seekingEnabled(isLive: transport.isLive))
         sink.publish(info: info,
                      playbackState: SoftwareNowPlayingPolicy.playbackState(state: state,
@@ -190,23 +207,46 @@ final class SoftwareNowPlayingController {
         }
     }
 
-    /// The ~10 Hz clock: republish only when the position left the extrapolation the system holds.
+    /// The ~10 Hz clock. The software path never reports buffering, so a clock that stands still while
+    /// playing is the stall signal: rate goes to 0 until it advances again. Otherwise republish only
+    /// when the position left the extrapolation the system holds (a seek while paused, a reposition).
     func clockTick(_ elapsed: Double) {
-        guard let published else { return }
+        guard let published, let transport else { return }
+        let now = uptime()
+        if transport.state == .playing {
+            if elapsed > lastTickElapsed + 0.001 {
+                lastTickElapsed = elapsed
+                lastAdvanceAt = now
+                if stalled {
+                    stalled = false
+                    refresh(requestedRate: nil, isBuffering: engineBuffering, elapsed: elapsed)
+                    return
+                }
+            } else if !stalled, now - lastAdvanceAt >= SoftwareNowPlayingPolicy.stallThreshold {
+                stalled = true
+                refresh(requestedRate: nil, isBuffering: engineBuffering, elapsed: elapsed)
+                return
+            }
+        }
         if SoftwareNowPlayingPolicy.needsRepublish(
             publishedElapsed: published.elapsed, publishedRate: published.rate,
-            secondsSincePublish: uptime() - published.at, currentElapsed: elapsed) {
-            refresh(requestedRate: nil, isBuffering: lastBuffering)
+            secondsSincePublish: now - published.at, currentElapsed: elapsed) {
+            refresh(requestedRate: nil, isBuffering: engineBuffering, elapsed: elapsed)
         }
     }
 
+    private var identitySeq = 0
     private var lastRequestedRate: Float = 1
-    private var lastBuffering = false
+    private var engineBuffering = false
+    private var stalled = false
+    private var lastTickElapsed: Double = 0
+    private var lastAdvanceAt: TimeInterval = 0
 }
 
 /// Identity keys for the card, taken from the AVKit `externalMetadata` the host already stages for the
 /// AVPlayer path, so one staging call serves whichever host plays.
 enum SoftwareNowPlayingIdentity {
+    /// The value loads suspend rather than block; only the artwork decode is moved off the main actor.
     @MainActor
     static func make(from items: [AVMetadataItem]) async -> [String: Any] {
         var info: [String: Any] = [:]
@@ -219,8 +259,9 @@ enum SoftwareNowPlayingIdentity {
             case .commonIdentifierAlbumName:
                 if let v = try? await item.load(.stringValue) { info[MPMediaItemPropertyAlbumTitle] = v }
             case .commonIdentifierArtwork:
-                if let data = try? await item.load(.dataValue), let art = artwork(from: data) {
-                    info[MPMediaItemPropertyArtwork] = art
+                if let data = try? await item.load(.dataValue) {
+                    let decoded = await BlockingWork.detached { ArtworkBox(artwork: artwork(from: data)) }.value
+                    if let art = decoded.artwork { info[MPMediaItemPropertyArtwork] = art }
                 }
             default: break
             }
@@ -239,6 +280,10 @@ enum SoftwareNowPlayingIdentity {
         return MPMediaItemArtwork(boundsSize: size) { _ in box.platformImage }
     }
 
+    private struct ArtworkBox: @unchecked Sendable {
+        let artwork: MPMediaItemArtwork?
+    }
+
     private struct UncheckedImage: @unchecked Sendable {
         let image: CGImage
         #if canImport(UIKit)
@@ -249,31 +294,22 @@ enum SoftwareNowPlayingIdentity {
     }
 }
 
-/// MediaPlayer-backed sink. iOS and tvOS bring a player-less `MPNowPlayingSession` (the documented route
-/// for a non-AVPlayer engine) so the app stays the active Now-Playing app across a pause; macOS has no
-/// session type and uses the shared centers.
+/// MediaPlayer-backed sink on the shared info and command centers. `MPNowPlayingSession` is not used:
+/// it asserts on an empty player list, and this host has no `AVPlayer` to give it.
 @MainActor
 final class SystemNowPlayingSink: SoftwareNowPlayingSink {
-    #if os(iOS) || os(tvOS)
-    private let session: MPNowPlayingSession = {
-        let s = MPNowPlayingSession(players: [])
-        s.automaticallyPublishesNowPlayingInfo = false
-        return s
-    }()
-    private var infoCenter: MPNowPlayingInfoCenter { session.nowPlayingInfoCenter }
-    private var commandCenter: MPRemoteCommandCenter { session.remoteCommandCenter }
-    var nowPlayingSession: MPNowPlayingSession { session }
-    #else
     private var infoCenter: MPNowPlayingInfoCenter { .default() }
     private var commandCenter: MPRemoteCommandCenter { .shared() }
-    #endif
     private var tokens: [(MPRemoteCommand, Any)] = []
 
-    func activate(handler: @escaping @MainActor (SoftwareNowPlayingCommand) -> Void) {
+    func activate(skipInterval: Double, handler: @escaping @MainActor (SoftwareNowPlayingCommand) -> Void) {
         let c = commandCenter
-        func add(_ command: MPRemoteCommand, _ make: @escaping @Sendable (MPRemoteCommandEvent) -> SoftwareNowPlayingCommand?) {
+        // MediaPlayer delivers commands on a queue of its own (not the main actor), so the target is
+        // explicitly @Sendable and hops to the main actor itself instead of inheriting this isolation.
+        func add(_ command: MPRemoteCommand,
+                 _ make: @escaping @Sendable (MPRemoteCommandEvent) -> SoftwareNowPlayingCommand?) {
             command.isEnabled = true
-            let token = command.addTarget { event in
+            let token = command.addTarget { @Sendable event in
                 guard let decoded = make(event) else { return .commandFailed }
                 Task { @MainActor in handler(decoded) }
                 return .success
@@ -283,7 +319,7 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
         add(c.playCommand) { _ in .play }
         add(c.pauseCommand) { _ in .pause }
         add(c.togglePlayPauseCommand) { _ in .togglePlayPause }
-        let interval = NSNumber(value: SoftwareNowPlayingPolicy.skipInterval)
+        let interval = NSNumber(value: skipInterval)
         c.skipForwardCommand.preferredIntervals = [interval]
         c.skipBackwardCommand.preferredIntervals = [interval]
         add(c.skipForwardCommand) { ($0 as? MPSkipIntervalCommandEvent).map { .skip(seconds: $0.interval) } }
@@ -291,9 +327,6 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
         add(c.changePlaybackPositionCommand) {
             ($0 as? MPChangePlaybackPositionCommandEvent).map { .changePosition(to: $0.positionTime) }
         }
-        #if os(iOS) || os(tvOS)
-        session.becomeActiveIfPossible(completion: { _ in })
-        #endif
     }
 
     func setSeekingEnabled(_ enabled: Bool) {
@@ -309,7 +342,10 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
     }
 
     func deactivate() {
-        for (command, token) in tokens { command.removeTarget(token) }
+        for (command, token) in tokens {
+            command.removeTarget(token)
+            command.isEnabled = false
+        }
         tokens.removeAll()
         publish(info: nil, playbackState: .stopped)
     }

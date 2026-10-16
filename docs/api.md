@@ -436,6 +436,7 @@ arrive together.
 | Set before the load | Why |
 | --- | --- |
 | `ownsVideoNowPlayingSession` | read when the native host is created; a host preserved across a native to native reload keeps what it was created with |
+| `ownsSoftwareNowPlaying`, `remoteSkipInterval` | read when the software host is built |
 | `LoadOptions.preferredAudioLanguages` | the picked audio track is muxed at the first frame; a later `selectAudioTrack` costs a reload |
 | `LoadOptions.prepareNativeSubtitles`, `externalSubtitles` | the native renditions are declared in the init segment |
 | `LoadOptions.panelIsInHDRMode`, `panelPresentsDolbyVision`, `matchContentEnabled` | the display-criteria handshake and the format clamp both run synchronously inside `load` |
@@ -1157,6 +1158,7 @@ say so on the tracker rather than working around it.
 | Symbol | Notes |
 | --- | --- |
 | `ownsVideoNowPlayingSession` | Opt in to owning system Now-Playing on the native **video** path. Off by default and that default is load-bearing: an `AVPlayerViewController` host already gets this from AVKit, and opting in costs it AVKit's card, its `externalMetadata` and its transport commands. Read at host creation, so set it before `load()`. |
+| `ownsSoftwareNowPlaying`, `remoteSkipInterval`, `softwareNowPlayingActive` | Opt in to the software host (the Dolby Vision FEL route, which has no `AVPlayer`) publishing its own Now-Playing card on the shared `MPNowPlayingInfoCenter` and serving play, pause, toggle, skip and change-position from `MPRemoteCommandCenter.shared()`. Off by default and independent of `ownsVideoNowPlayingSession`, so the native path is untouched; a secondary role never takes it. Identity comes from `setExternalMetadata`, overlaid by `setVideoNowPlayingInfo`. `remoteSkipInterval` (default 10 s) sets the skip buttons. `softwareNowPlayingActive` is true while the engine is publishing, the cue for a host to register next/previous. |
 | `videoNowPlayingSession`, `setVideoNowPlayingInfo(_:)` | The session and its staged identity dictionary. Elapsed / rate / duration are merged from the player; do not stage them. |
 | `audioNowPlayingSession`, `setAudioNowPlayingInfo(_:)` | The same pair for the audio-only path, which owns its session unconditionally (there is no AVKit fork there). Pass an empty dictionary to clear. |
 | `setExternalMetadata(_:)` | AVKit's on-screen info pane on the video path. Safe before `load()`; replayed at host creation. |

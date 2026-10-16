@@ -8,11 +8,23 @@ private final class RecordingTransport: SoftwareNowPlayingTransport {
     var currentTime: Double = 0
     var duration: Double = 100
     var isLive = false
-    var calls: [String] = []
+    var calls: [String] = [] { didSet { resumeWaiter() } }
+    private var waiter: (count: Int, continuation: CheckedContinuation<Void, Never>)?
     func play() { calls.append("play") }
     func pause() { calls.append("pause") }
     func togglePlayPause() { calls.append("toggle") }
     func seek(to seconds: Double) async { calls.append("seek:\(seconds)") }
+
+    /// Suspends until `count` calls were recorded; the commands run in tasks the test cannot await.
+    func waitForCalls(_ count: Int) async {
+        if calls.count >= count { return }
+        await withCheckedContinuation { waiter = (count, $0) }
+    }
+    private func resumeWaiter() {
+        guard let w = waiter, calls.count >= w.count else { return }
+        waiter = nil
+        w.continuation.resume()
+    }
 }
 
 @MainActor
@@ -21,7 +33,11 @@ private final class RecordingSink: SoftwareNowPlayingSink {
     var seekingEnabled: Bool?
     var published: [(info: [String: Any]?, state: MPNowPlayingPlaybackState)] = []
     var deactivated = false
-    func activate(handler: @escaping @MainActor (SoftwareNowPlayingCommand) -> Void) { self.handler = handler }
+    var skipInterval: Double?
+    func activate(skipInterval: Double, handler: @escaping @MainActor (SoftwareNowPlayingCommand) -> Void) {
+        self.skipInterval = skipInterval
+        self.handler = handler
+    }
     func setSeekingEnabled(_ enabled: Bool) { seekingEnabled = enabled }
     func publish(info: [String: Any]?, playbackState: MPNowPlayingPlaybackState) {
         published.append((info, playbackState))
@@ -58,13 +74,13 @@ struct SoftwareNowPlayingTests {
         #expect(rate(stalled) == 0)
     }
 
-    @Test("end of media parks the position at the duration with rate 0 and a stopped state")
+    @Test("end of media parks the position at the duration with rate 0 and keeps the card paused")
     func ended() {
         let info = SoftwareNowPlayingPolicy.info(state: .ended, elapsed: 99.2, duration: 100, isLive: false,
                                                  isBuffering: false, requestedRate: 1, identity: [:])
         #expect(elapsed(info) == 100)
         #expect(rate(info) == 0)
-        #expect(SoftwareNowPlayingPolicy.playbackState(state: .ended, intendedPlaying: true) == .stopped)
+        #expect(SoftwareNowPlayingPolicy.playbackState(state: .ended, intendedPlaying: true) == .paused)
     }
 
     @Test("idle and error clear the card")
@@ -120,7 +136,7 @@ struct SoftwareNowPlayingTests {
         SoftwareNowPlayingPolicy.perform(.skip(seconds: 10), on: t)
         SoftwareNowPlayingPolicy.perform(.skip(seconds: -10), on: t)
         SoftwareNowPlayingPolicy.perform(.changePosition(to: 77), on: t)
-        await Task.yield(); await Task.yield(); await Task.yield()
+        await t.waitForCalls(6)
         #expect(t.calls.prefix(3) == ["play", "pause", "toggle"])
         #expect(Set(t.calls.dropFirst(3)) == ["seek:60.0", "seek:40.0", "seek:77.0"])
     }
@@ -136,14 +152,15 @@ struct SoftwareNowPlayingTests {
     func controller() async {
         let t = RecordingTransport(), sink = RecordingSink()
         let c = SoftwareNowPlayingController(sink: sink, transport: t)
-        c.start()
+        c.start(skipInterval: 15)
+        #expect(sink.skipInterval == 15)
         t.state = .playing; t.currentTime = 12
         c.refresh(requestedRate: 2, isBuffering: false)
         #expect(rate(sink.published.last?.info) == 2)
         #expect(sink.published.last?.state == .playing)
         #expect(sink.seekingEnabled == true)
         sink.handler?(.changePosition(to: 30))
-        await Task.yield(); await Task.yield()
+        await t.waitForCalls(1)
         #expect(t.calls == ["seek:30.0"])
         c.stop()
         #expect(sink.deactivated)
@@ -165,5 +182,84 @@ struct SoftwareNowPlayingTests {
         c.clockTick(90)
         #expect(sink.published.count == base + 1)
         #expect(elapsed(sink.published.last?.info) == 90)
+    }
+
+    @Test("a clock that stands still while playing publishes rate 0, and the next advance restores it")
+    func stallAndRecover() {
+        var now: TimeInterval = 1000
+        let t = RecordingTransport(), sink = RecordingSink()
+        let c = SoftwareNowPlayingController(sink: sink, transport: t, uptime: { now })
+        t.state = .playing; t.currentTime = 10
+        c.refresh(requestedRate: 1, isBuffering: false)
+        now += 0.3
+        c.clockTick(10)
+        #expect(rate(sink.published.last?.info) == 1)
+        now += 0.3
+        c.clockTick(10)
+        #expect(rate(sink.published.last?.info) == 0)
+        #expect(sink.published.last?.state == .playing)
+        now += 0.1
+        c.clockTick(10.4)
+        #expect(rate(sink.published.last?.info) == 1)
+        #expect(elapsed(sink.published.last?.info) == 10.4)
+    }
+
+    @Test("a paused clock is not a stall")
+    func pausedIsNotAStall() {
+        var now: TimeInterval = 1000
+        let t = RecordingTransport(), sink = RecordingSink()
+        let c = SoftwareNowPlayingController(sink: sink, transport: t, uptime: { now })
+        t.state = .paused; t.currentTime = 10
+        c.refresh(requestedRate: 1, isBuffering: false)
+        let base = sink.published.count
+        now += 5
+        c.clockTick(10)
+        #expect(sink.published.count == base)
+    }
+
+    @Test("only the latest identity ticket is applied")
+    func identityTickets() {
+        let t = RecordingTransport(), sink = RecordingSink()
+        let c = SoftwareNowPlayingController(sink: sink, transport: t)
+        t.state = .paused
+        let first = c.beginIdentityUpdate()
+        let second = c.beginIdentityUpdate()
+        c.setIdentity([MPMediaItemPropertyTitle: "new"], ticket: second)
+        c.setIdentity([MPMediaItemPropertyTitle: "old"], ticket: first)
+        #expect(sink.published.last?.info?[MPMediaItemPropertyTitle] as? String == "new")
+        #expect(sink.published.count == 1)
+    }
+
+    @Test("the engine builds no publisher by default")
+    func engineDefaultOff() throws {
+        let engine = try AetherEngine()
+        #expect(!engine.ownsSoftwareNowPlaying)
+        engine.startSoftwareNowPlaying()
+        #expect(engine.softwareNowPlaying == nil)
+        #expect(!engine.softwareNowPlayingActive)
+    }
+
+    @Test("a secondary engine never takes Now-Playing even when opted in")
+    func engineSecondaryRole() throws {
+        let engine = try AetherEngine()
+        engine.ownsSoftwareNowPlaying = true
+        var options = engine.loadedOptions
+        options.sharedOutputRole = .secondary
+        engine.setLoadedOptionsForTesting(options)
+        engine.startSoftwareNowPlaying()
+        #expect(engine.softwareNowPlaying == nil)
+        #expect(!engine.softwareNowPlayingActive)
+    }
+
+    @Test("an opted-in primary engine publishes, and stopping releases it")
+    func enginePrimaryOptIn() throws {
+        let engine = try AetherEngine()
+        engine.ownsSoftwareNowPlaying = true
+        engine.startSoftwareNowPlaying()
+        #expect(engine.softwareNowPlaying != nil)
+        #expect(engine.softwareNowPlayingActive)
+        engine.stopSoftwareNowPlaying()
+        #expect(engine.softwareNowPlaying == nil)
+        #expect(!engine.softwareNowPlayingActive)
     }
 }

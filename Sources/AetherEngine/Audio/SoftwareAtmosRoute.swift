@@ -57,4 +57,6 @@ enum SoftwareAtmosRoute: Equatable, Sendable {
     /// the byte budget keeps a late-starting track in a 4K remux from pinning the video before it.
     static let jocPeekPacketBudget = 512
     static let jocPeekByteBudget = 24 << 20
+    /// Audio packets the `dec3` box is tried on before the stream stays PCM.
+    static let jocBoxAttempts = 4
 }

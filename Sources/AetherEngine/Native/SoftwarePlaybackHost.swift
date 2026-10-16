@@ -1215,16 +1215,13 @@ final class SoftwarePlaybackHost {
                 self.audioStreamIndex = resolvedAudioIdx
                 let atb = aStream.pointee.time_base
                 self.audioTimeBaseSeconds = atb.den > 0 ? Double(atb.num) / Double(atb.den) : 0
+            } catch is CancellationError {
+                // stop() landed while the audio route was being chosen; the demuxer is closing.
+                return
             } catch {
                 EngineLog.emit("[SWHost] audio open failed (\(error)); video-only", category: .swPlayback)
                 self.audioStreamIndex = -1
             }
-        }
-        // The Atmos decoder registration started while the rest of the load ran; the first enqueue
-        // has to come after it (`AtmosDecoderPrimer`). Nothing waits when the session is not on that route.
-        if audioRoute == .compressedEAC3JOC {
-            await AtmosDecoderPrimer.shared.ensurePrimed()
-            guard !stopRequested else { return }
         }
         // AE#462: after the decoder has had its chance, whichever way the block above left it, so a
         // stream present but unusable (no codecpar) classifies as the drop it is rather than as a
@@ -1283,8 +1280,8 @@ final class SoftwarePlaybackHost {
             // remote source that has to scan for its landing would otherwise block the main thread here.
             let outcome = await reposition(dem, sourceStart, Self.seekBudgetSeconds, seekQueue,
                                            { [weak self] in self?.stopRequested ?? true })
-            // Besides the in-band record completion above, this is load()'s only suspension point, so it
-            // is the other place a stop() can land mid-load. Arming the clock and publishing isReady on a session already torn down would
+            // Like the others (the audio route choice, the cache setup, the primer wait), this
+            // suspension is a place a stop() can land mid-load. Arming the clock and publishing isReady on a session already torn down would
             // hand the engine a host it has stopped.
             guard !stopRequested, !Task.isCancelled, outcome != .superseded else {
                 throw CancellationError()
@@ -1369,8 +1366,23 @@ final class SoftwarePlaybackHost {
             readAhead?.start()
         }
 
+        // The Atmos decoder registration started when the route was chosen and has run alongside the
+        // resume seek and the cache setup; only what is left of its window is waited out here, and
+        // only on the compressed-JOC route (`AtmosDecoderPrimer`). The first enqueue is after load().
+        await Self.awaitAtmosPrimer(for: audioRoute, wait: atmosPrimerWait)
+        guard !stopRequested else { return }
+
         startTimeUpdates()
         isReady = true
+    }
+
+    /// How the host waits for the Atmos decoder registration. Replaced by tests.
+    var atmosPrimerWait: @MainActor () async -> Void = { await AtmosDecoderPrimer.shared.ensurePrimed() }
+
+    /// Waits for the registration on the route that needs it and never on any other.
+    static func awaitAtmosPrimer(for route: SoftwareAtmosRoute, wait: @MainActor () async -> Void) async {
+        guard route == .compressedEAC3JOC else { return }
+        await wait()
     }
 
     // MARK: - Transport
@@ -3336,6 +3348,13 @@ final class SoftwarePlaybackHost {
                 // Play the parked tail out before the flush: nothing more will arrive, the queues
                 // must drain to end-of-media. The wait lifts a rebuffer hold on its own - held,
                 // the clock would never take the tail and end-of-media would never be reached.
+                // What the audio producer still holds (the APAC encoder's last packets) goes in
+                // first, so the drain below plays it too.
+                if let aDec = audioDecoder, let aOut = audioOutput {
+                    for buf in aDec.endOfStream() {
+                        guard aOut.enqueue(sampleBuffer: buf, ifEpoch: audioEpochBeforeRead) else { break }
+                    }
+                }
                 releaseRebufferHold("end of media, nothing left to rebuffer from")
                 waitForRenderer(.drainAll)
                 guard admitsRead(genBeforeRead) else { return !stopRequested() }

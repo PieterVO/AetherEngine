@@ -23,13 +23,48 @@ final class SoftwareEAC3Passthrough: SoftwareAudioProducing, @unchecked Sendable
         let carriesJOC: Bool
     }
 
+    /// What looking at the stream's first packets found.
+    enum Probe {
+        case notEAC3
+        /// No audio packet of the stream turned up in the packets looked at.
+        case noAudioPacket
+        /// The look ran out of its byte budget before an audio packet showed up.
+        case budgetExhausted
+        /// Audio packets were there but no `dec3` box could be built from them.
+        case dec3BuildFailed
+        case found(Entry)
+
+        var entry: Entry? {
+            if case .found(let entry) = self { return entry }
+            return nil
+        }
+
+        /// Why the stream stays on the PCM decode, for the log.
+        func pcmReason(channels: Int32) -> String {
+            switch self {
+            case .notEAC3: return "not E-AC-3"
+            case .noAudioPacket: return "no audio packet in the first packets"
+            case .budgetExhausted: return "the look at the stream ran out of its byte budget"
+            case .dec3BuildFailed: return "the dec3 box could not be built from the first packets"
+            case .found(let entry):
+                return entry.carriesJOC ? "JOC, but \(channels) channels is not the 5.1 bed"
+                                        : "no JOC in the dec3 box"
+            }
+        }
+    }
+
     private static let framesPerPacket: Int64 = 1536
     private static let sampleRate: Double = 48_000
 
     private let formatDescription: CMAudioFormatDescription
     private let timeBase: AVRational
-    /// Decodes for the audio tap only: `decode` itself never runs it.
-    private let tapDecoder = AudioDecoder()
+    private let stream: UnsafeMutablePointer<AVStream>
+    /// Decodes for the audio tap only: `decode` itself never runs it. Opened on the first tap, since
+    /// most sessions never tap, and under the lock because the tap runs on the demux thread while
+    /// `close` can come from the main actor.
+    private var tapDecoder: AudioDecoder?
+    private var tapOpenFailed = false
+    private var closed = false
     private let lock = NSLock()
     /// Where the next packet sits when the container left its stamps out.
     private var nextSeconds: Double?
@@ -37,7 +72,7 @@ final class SoftwareEAC3Passthrough: SoftwareAudioProducing, @unchecked Sendable
     init(stream: UnsafeMutablePointer<AVStream>, formatDescription: CMAudioFormatDescription) throws {
         self.formatDescription = formatDescription
         self.timeBase = stream.pointee.time_base
-        try tapDecoder.open(stream: stream)
+        self.stream = stream
     }
 
     // MARK: - Format description
@@ -53,6 +88,9 @@ final class SoftwareEAC3Passthrough: SoftwareAudioProducing, @unchecked Sendable
                      carriesJOC: RemoteHLSStreamDescription.eac3CarriesJOC(dec3: box))
     }
 
+    /// The description is fixed at 6 channels, 48 kHz and 1536 frames a packet on purpose: JOC is
+    /// carried in a 5.1 E-AC-3 bed at that rate and frame size, `SoftwareAtmosRoute` admits nothing
+    /// else, and the renderer takes the object layout from the `dec3` cookie rather than from here.
     static func formatDescription(dec3Box: Data) -> CMAudioFormatDescription? {
         var asbd = AudioStreamBasicDescription(
             mSampleRate: sampleRate, mFormatID: kAudioFormatEnhancedAC3, mFormatFlags: 0,
@@ -109,17 +147,49 @@ final class SoftwareEAC3Passthrough: SoftwareAudioProducing, @unchecked Sendable
         return av_write_trailer(ctx) >= 0
     }
 
-    /// The first box of `type` in an ISO BMFF byte run, found by its four-character code and checked
-    /// against the size in front of it, returned whole.
+    /// The first box of `type` inside the `moov` box of an ISO BMFF byte run, found by its
+    /// four-character code, checked against the size in front of it and returned whole. Looking only
+    /// inside `moov` keeps payload bytes that happen to spell the code from being taken for a box.
     static func findBox(_ type: String, in bytes: UnsafeBufferPointer<UInt8>) -> Data? {
         let code = Array(type.utf8)
-        guard code.count == 4, bytes.count >= 8 else { return nil }
-        for i in 4...(bytes.count - 4) where Array(bytes[i..<(i + 4)]) == code {
-            let start = i - 4
-            let size = (Int(bytes[start]) << 24) | (Int(bytes[start + 1]) << 16)
-                | (Int(bytes[start + 2]) << 8) | Int(bytes[start + 3])
-            guard size >= 8, start + size <= bytes.count else { continue }
-            return Data(bytes[start..<(start + size)])
+        guard code.count == 4, let moov = topLevelPayload("moov", in: bytes) else { return nil }
+        var i = moov.lowerBound + 4
+        while i + 4 <= moov.upperBound {
+            if Array(bytes[i..<(i + 4)]) == code {
+                let start = i - 4
+                let size = Int(boxSize(bytes, at: start))
+                if size >= 8, start >= moov.lowerBound, start + size <= moov.upperBound {
+                    return Data(bytes[start..<(start + size)])
+                }
+            }
+            i += 1
+        }
+        return nil
+    }
+
+    private static func boxSize(_ bytes: UnsafeBufferPointer<UInt8>, at i: Int) -> UInt32 {
+        (UInt32(bytes[i]) << 24) | (UInt32(bytes[i + 1]) << 16) | (UInt32(bytes[i + 2]) << 8) | UInt32(bytes[i + 3])
+    }
+
+    /// The payload range of the first top-level box of `type`.
+    private static func topLevelPayload(_ type: String, in bytes: UnsafeBufferPointer<UInt8>) -> Range<Int>? {
+        let code = Array(type.utf8)
+        var i = 0
+        while i + 8 <= bytes.count {
+            let size32 = boxSize(bytes, at: i)
+            var header = 8
+            var size = Int(size32)
+            if size32 == 1 {
+                guard i + 16 <= bytes.count else { return nil }
+                size = 0
+                for k in 8..<16 { size = (size << 8) | Int(bytes[i + k]) }
+                header = 16
+            } else if size32 == 0 {
+                size = bytes.count - i
+            }
+            guard size >= header, i + size <= bytes.count else { return nil }
+            if Array(bytes[(i + 4)..<(i + 8)]) == code { return (i + header)..<(i + size) }
+            i += size
         }
         return nil
     }
@@ -174,15 +244,28 @@ final class SoftwareEAC3Passthrough: SoftwareAudioProducing, @unchecked Sendable
     func flush() {
         lock.lock()
         nextSeconds = nil
+        let tap = tapDecoder
         lock.unlock()
-        tapDecoder.flush()
+        tap?.flush()
     }
 
     func close() {
-        tapDecoder.close()
+        lock.lock()
+        closed = true
+        let tap = tapDecoder
+        tapDecoder = nil
+        lock.unlock()
+        tap?.close()
     }
 
     func tapBuffers(for packet: UnsafeMutablePointer<AVPacket>, produced: [CMSampleBuffer]) -> [CMSampleBuffer] {
-        tapDecoder.decode(packet: packet)
+        lock.lock()
+        if tapDecoder == nil, !tapOpenFailed, !closed {
+            let decoder = AudioDecoder()
+            if (try? decoder.open(stream: stream)) != nil { tapDecoder = decoder } else { tapOpenFailed = true }
+        }
+        let tap = tapDecoder
+        lock.unlock()
+        return tap?.decode(packet: packet) ?? []
     }
 }

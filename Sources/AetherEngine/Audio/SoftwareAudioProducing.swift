@@ -15,12 +15,16 @@ protocol SoftwareAudioProducing: AnyObject, Sendable {
     /// Drop everything held (seek).
     func flush()
     func close()
+    /// The end of the source: whatever the producer still holds, stamped like `decode`'s output.
+    /// Only the APAC encoder holds anything (its last packets); the others have nothing.
+    func endOfStream() -> [CMSampleBuffer]
     /// PCM for the audio tap, which feeds on decoded audio whatever the renderer was given.
     /// `produced` is what `decode` returned for `packet`; a PCM producer hands it straight back.
     func tapBuffers(for packet: UnsafeMutablePointer<AVPacket>, produced: [CMSampleBuffer]) -> [CMSampleBuffer]
 }
 
 extension SoftwareAudioProducing {
+    func endOfStream() -> [CMSampleBuffer] { [] }
     func tapBuffers(for packet: UnsafeMutablePointer<AVPacket>, produced: [CMSampleBuffer]) -> [CMSampleBuffer] {
         produced
     }

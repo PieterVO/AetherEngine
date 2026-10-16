@@ -88,17 +88,33 @@ struct SoftwareAtmosRouteTests {
         #expect(!RemoteHLSStreamDescription.eac3CarriesJOC(dec3: Self.plainBox))
     }
 
-    @Test("a box is found by its type and checked against its size")
+    private static func box(_ type: String, _ payload: [UInt8]) -> [UInt8] {
+        let size = UInt32(payload.count + 8)
+        return [UInt8(size >> 24 & 0xff), UInt8(size >> 16 & 0xff), UInt8(size >> 8 & 0xff), UInt8(size & 0xff)]
+            + Array(type.utf8) + payload
+    }
+
+    @Test("a box is found by its type inside moov and checked against its size")
     func findBox() {
-        let junk: [UInt8] = [1, 2, 3, 4, 5, 6, 7, 8]
-        let bytes = junk + [UInt8](Self.jocBox) + junk
+        let trak = Self.box("trak", [UInt8](Self.jocBox))
+        let bytes = Self.box("ftyp", [1, 2, 3, 4, 5, 6, 7, 8]) + Self.box("moov", trak)
         bytes.withUnsafeBufferPointer { buffer in
             #expect(SoftwareEAC3Passthrough.findBox("dec3", in: buffer) == Self.jocBox)
             #expect(SoftwareEAC3Passthrough.findBox("dac3", in: buffer) == nil)
         }
-        // A type code whose size runs past the end is not a box.
-        let truncated = Array(junk + [UInt8](Self.jocBox).dropLast(4))
+        // A box whose size runs past the end of its parent is not a box.
+        let truncated = Self.box("moov", [UInt8](Self.jocBox).dropLast(4).map { $0 })
         truncated.withUnsafeBufferPointer { #expect(SoftwareEAC3Passthrough.findBox("dec3", in: $0) == nil) }
+    }
+
+    @Test("a dec3 code that sits outside moov, in sample data, is not taken for the box")
+    func findBoxIgnoresPayloadOutsideMoov() {
+        let bytes = Self.box("ftyp", [1, 2, 3, 4]) + Self.box("mdat", [UInt8](Self.jocBox))
+            + Self.box("moov", Self.box("trak", [9, 9, 9, 9]))
+        bytes.withUnsafeBufferPointer { #expect(SoftwareEAC3Passthrough.findBox("dec3", in: $0) == nil) }
+        // And with no moov at all.
+        let noMoov = Self.box("mdat", [UInt8](Self.jocBox))
+        noMoov.withUnsafeBufferPointer { #expect(SoftwareEAC3Passthrough.findBox("dec3", in: $0) == nil) }
     }
 
     @Test("FFmpeg's muxer builds a dec3 box from a real E-AC-3 packet, and a plain stream is not JOC")
@@ -161,5 +177,47 @@ struct SoftwareAtmosRouteTests {
         let packet = av_packet_alloc()
         guard avcodec_receive_packet(c, packet) >= 0 else { return nil }
         return packet
+    }
+
+    // MARK: - Host
+
+    @Test("the primer is awaited on the compressed JOC route and on no other")
+    @MainActor
+    func primerAwaitedOnlyForJOC() async {
+        var waits = 0
+        for route in [SoftwareAtmosRoute.pcm, .apac(.l714), .apac(.l512)] {
+            await SoftwarePlaybackHost.awaitAtmosPrimer(for: route) { waits += 1 }
+        }
+        #expect(waits == 0)
+        await SoftwarePlaybackHost.awaitAtmosPrimer(for: .compressedEAC3JOC) { waits += 1 }
+        #expect(waits == 1)
+    }
+
+    @Test("a PCM track stays on the PCM route whatever the rendering option says")
+    @MainActor
+    func hostKeepsPCMTrackOnPCM() async throws {
+        let demuxer = Demuxer()
+        try demuxer.open(reader: DataIOReader(data: Self.silentWAV()))
+        defer { demuxer.close() }
+        for rendering in [ObjectAudioRendering.off, .apac(.l714)] {
+            let host = SoftwarePlaybackHost()
+            host.objectAudioRendering = rendering
+            let made = try await host.makeAudioProducer(demuxer: demuxer, streamIndex: 0, isLive: false)
+            defer { made.producer.close() }
+            #expect(made.route == .pcm)
+            #expect(made.producer is AudioDecoder)
+        }
+    }
+
+    private static func silentWAV() -> Data {
+        let pcm = Data(count: 48_000 * 2 * 2)
+        var d = Data()
+        func str(_ s: String) { d.append(s.data(using: .ascii)!) }
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        str("RIFF"); u32(UInt32(36 + pcm.count)); str("WAVE")
+        str("fmt "); u32(16); u16(1); u16(2); u32(48_000); u32(48_000 * 4); u16(4); u16(16)
+        str("data"); u32(UInt32(pcm.count)); d.append(pcm)
+        return d
     }
 }

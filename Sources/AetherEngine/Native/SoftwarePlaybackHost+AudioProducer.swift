@@ -24,12 +24,24 @@ extension SoftwarePlaybackHost {
         }
         guard objectAudioRendering != .off, !isLive else { return try pcm() }
 
-        var joc: SoftwareEAC3Passthrough.Entry?
+        // The look at the stream and the DTS:X verdict run off the main actor, and a stop() can land
+        // while they do: it closes the demuxer, which frees the streams `stream` and `par` point into.
+        // After every suspension nothing below touches them until this has passed.
+        func stillLive() throws {
+            if stopRequested || Task.isCancelled { throw CancellationError() }
+        }
+
+        // The look happens before the resume seek on purpose: JOC is a property of the stream, the
+        // first packets are enough to read it, and a peek at the start of the file does not depend on
+        // where a resume lands (which, on a remote source, may be far from anything cached).
+        var probe: SoftwareEAC3Passthrough.Probe = .notEAC3
         if par.pointee.codec_id == AV_CODEC_ID_EAC3 {
-            joc = await BlockingWork.detached(priority: .userInitiated) {
+            probe = await BlockingWork.detached(priority: .userInitiated) {
                 Self.firstEAC3Entry(demuxer: dem, streamIndex: streamIndex)
             }.value
+            try stillLive()
         }
+        let joc = probe.entry
         let route = SoftwareAtmosRoute.route(
             codecID: par.pointee.codec_id, profile: par.pointee.profile,
             sampleRate: par.pointee.sample_rate, channels: par.pointee.ch_layout.nb_channels,
@@ -38,8 +50,8 @@ extension SoftwarePlaybackHost {
         switch route {
         case .pcm:
             if par.pointee.codec_id == AV_CODEC_ID_EAC3 {
-                EngineLog.emit("[SWHost] audio: E-AC-3 stays PCM (JOC=\(joc?.carriesJOC == true) "
-                               + "channels=\(par.pointee.ch_layout.nb_channels))", category: .swPlayback)
+                EngineLog.emit("[SWHost] audio: E-AC-3 stays PCM (\(probe.pcmReason(channels: par.pointee.ch_layout.nb_channels)))",
+                               category: .swPlayback)
             }
             return try pcm()
         case .compressedEAC3JOC:
@@ -58,26 +70,38 @@ extension SoftwarePlaybackHost {
             }
         case .apac(let layout):
             guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *) else { return try pcm() }
-            if let producer = await makeAPACProducer(demuxer: dem, stream: stream, streamIndex: streamIndex, layout: layout) {
-                return (producer, route)
-            }
+            let producer = await makeAPACProducer(demuxer: dem, stream: stream, streamIndex: streamIndex, layout: layout)
+            try stillLive()
+            if let producer { return (producer, route) }
             return try pcm()
         }
     }
 
-    /// The first E-AC-3 access unit of the stream, looked at without consuming it.
-    nonisolated static func firstEAC3Entry(demuxer: Demuxer, streamIndex: Int32) -> SoftwareEAC3Passthrough.Entry? {
-        guard let par = demuxer.stream(at: streamIndex)?.pointee.codecpar else { return nil }
-        var entry: SoftwareEAC3Passthrough.Entry?
+    /// The format entry of the stream's E-AC-3 packets, looked at without consuming them. The box is
+    /// built from the first audio packet and, if that fails, from the next few: one malformed access
+    /// unit at the head of a file must not decide the whole session's audio.
+    nonisolated static func firstEAC3Entry(
+        demuxer: Demuxer, streamIndex: Int32
+    ) -> SoftwareEAC3Passthrough.Probe {
+        guard let par = demuxer.stream(at: streamIndex)?.pointee.codecpar else { return .noAudioPacket }
+        var result: SoftwareEAC3Passthrough.Probe = .noAudioPacket
         var heldBytes = 0
+        var attempts = 0
+        var budgetHit = false
         try? demuxer.peekPackets(maxPackets: SoftwareAtmosRoute.jocPeekPacketBudget) { packet in
             heldBytes += Int(max(packet.pointee.size, 0))
-            if heldBytes > SoftwareAtmosRoute.jocPeekByteBudget { return true }
+            if heldBytes > SoftwareAtmosRoute.jocPeekByteBudget { budgetHit = true; return true }
             guard packet.pointee.stream_index == streamIndex, packet.pointee.size > 0 else { return false }
-            entry = SoftwareEAC3Passthrough.entry(codecpar: par, packet: packet)
-            return true
+            attempts += 1
+            if let entry = SoftwareEAC3Passthrough.entry(codecpar: par, packet: packet) {
+                result = .found(entry)
+                return true
+            }
+            result = .dec3BuildFailed
+            return attempts >= SoftwareAtmosRoute.jocBoxAttempts
         }
-        return entry
+        if case .noAudioPacket = result, budgetHit { return .budgetExhausted }
+        return result
     }
 
     @available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
@@ -85,6 +109,9 @@ extension SoftwarePlaybackHost {
         demuxer dem: Demuxer, stream: UnsafeMutablePointer<AVStream>, streamIndex: Int32,
         layout: SpatialSpeakerLayout
     ) async -> (any SoftwareAudioProducing)? {
+        // `nil` after a stop() is as good as any other nil: the caller checks the stop before it
+        // touches the stream again. Nothing here reads `stream` once the verdict has been awaited
+        // without checking first.
         let par = stream.pointee.codecpar.pointee
         guard let source = HLSVideoEngine.objectAudioSource(codecID: par.codec_id, profile: par.profile) else { return nil }
         let decoder: ObjectAudioDecoding
@@ -105,6 +132,7 @@ extension SoftwarePlaybackHost {
                 let verdict = await BlockingWork.detached(priority: .userInitiated) {
                     HLSVideoEngine.dtsxVerdict(decoder: verdictDecoder, demuxer: dem, streamIndex: streamIndex)
                 }.value
+                guard !stopRequested, !Task.isCancelled else { return nil }
                 guard case .renders(let presentation) = verdict else {
                     EngineLog.emit("[SWHost] audio: DTS-HD MA track is not DTS:X this build renders; PCM decode",
                                    category: .swPlayback)
@@ -119,15 +147,13 @@ extension SoftwarePlaybackHost {
                 #endif
             }
             let bridge = try SpatialAudioBridge(srcTimeBase: stream.pointee.time_base, layout: layout, decoder: decoder)
-            let tap = AudioDecoder()
-            let tapDecoder: AudioDecoder? = (try? tap.open(stream: stream)) != nil ? tap : nil
             bridge.onDecoderProducedNothing = { stats in
                 EngineLog.emit("[SWHost] ERROR: \(source.name) object decoder produced nothing: \(stats.summary)",
                                category: .swPlayback)
             }
             EngineLog.emit("[SWHost] audio: \(source.name) rendered into \(layout.rawValue) as APAC for the renderer",
                            category: .swPlayback)
-            return SoftwareAPACProducer(bridge: bridge, tapDecoder: tapDecoder)
+            return SoftwareAPACProducer(bridge: bridge, stream: stream)
         } catch {
             EngineLog.emit("[SWHost] audio: \(source.name) APAC route unavailable (\(error)); PCM decode",
                            category: .swPlayback)

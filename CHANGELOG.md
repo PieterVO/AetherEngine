@@ -25,6 +25,19 @@ the public-API contract.
 
 ### Fixed
 
+- **A live stream read off its URL and refused for a while keeps its session.** The continuous
+  MPEG-TS form of an IPTV channel is one connection for as long as it plays, and a connection-limited
+  panel answers its reconnects with 509 while another device on the account holds the last slot, for
+  seconds to tens of seconds. The reader climbed its 0.5, 1, 2, 4, 8 s ladder, gave up after six
+  refusals, and each refusal armed the origin's request pacer (a quiet of up to 15 s, with each
+  request waiting up to 10 s on it), which the reload after it then waited out. A live stream's
+  429/503/509 is now asked again every second, or after the origin's Retry-After up to 5 s, for up to
+  60 s, the way the live HLS ingest asks for its playlist (#778); its refusals arm no pacer and lower
+  no budget, and the books still say the origin refused, so the revive arm tells metered from lost. A
+  live open the origin answers with a status fails typed with that status at once
+  (`AVIOReaderError.httpStatus`, `sourceRateLimited` or `sourceRefused` at the host), where the read
+  loop used to spend the open budget on the same request and hand back an untyped read failure.
+  `LiveStreamRefusalRetryTests`.
 - **Profile 7 FEL chroma residual is sampled where the base chroma sits.** With a quarter-resolution
   enhancement layer (1080p under 4K), the chroma kernel read the enhancement chroma at texel centres,
   a quarter of an EL chroma texel up and to the left of the co-sited (top-left) chroma location HDR

@@ -33,4 +33,18 @@ struct FrameDecodeContextClampTests {
         // Rounding can put the last-frame request a hair past the reported duration; that must not clamp.
         #expect(FrameDecodeContext.clampSeekSeconds(requested: 76.7, duration: 76.64) == 76.7)
     }
+
+    @Test("a file that starts at t > 0 measures its end from its own origin")
+    func nonZeroStart() {
+        // A 60 s span beginning at 1000 s ends at 1060 s: a request inside it is left alone.
+        #expect(FrameDecodeContext.clampSeekSeconds(requested: 1030, duration: 60, start: 1000) == 1030)
+        #expect(FrameDecodeContext.clampSeekSeconds(requested: 1060.5, duration: 60, start: 1000) == 1060.5)
+        // Past the end it lands just inside it, never back in the span's own zero-based range.
+        #expect(FrameDecodeContext.clampSeekSeconds(requested: 2000, duration: 60, start: 1000) == 1059)
+        // A degenerate start is the zero-based behaviour.
+        #expect(FrameDecodeContext.clampSeekSeconds(requested: 611.25, duration: 76.64, start: .nan)
+                == FrameDecodeContext.clampSeekSeconds(requested: 611.25, duration: 76.64))
+        #expect(FrameDecodeContext.clampSeekSeconds(requested: 2000, duration: 60, start: -5)
+                == FrameDecodeContext.clampSeekSeconds(requested: 2000, duration: 60))
+    }
 }

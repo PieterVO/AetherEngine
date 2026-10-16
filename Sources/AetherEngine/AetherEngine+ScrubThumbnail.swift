@@ -180,16 +180,14 @@ extension AetherEngine {
             extractor = made
         }
         let source = host.sourceSeconds(forSession: seconds)
-        let image: CGImage?
-        if refined {
-            image = await extractor.snapshot(at: source, maxSize: CGSize(width: maxWidth, height: maxWidth))
-        } else {
-            image = await extractor.thumbnail(at: source, maxWidth: maxWidth)
-        }
-        guard let image, gen == loadGeneration, !Task.isCancelled, !isCancelled() else { return nil }
-        // The extractor reports no measured time: a thumbnail is the keyframe at or before the
-        // target, so the requested time is the best name for it.
-        return ScrubFrame(image: image, actualSeconds: seconds, refined: refined)
+        guard let still = await extractor.boundedLocalStill(at: source, refined: refined, maxWidth: maxWidth,
+                                                            isCancelled: isCancelled),
+              gen == loadGeneration, !Task.isCancelled, !isCancelled() else { return nil }
+        // The time of the frame that was decoded, back on the session axis. A source that stamps no
+        // frame time can only be labelled with the request.
+        let zero = host.sourceSeconds(forSession: 0)
+        let actual = still.decodedSeconds.map { max(0, $0 - zero) } ?? seconds
+        return ScrubFrame(image: still.image, actualSeconds: actual, refined: refined)
     }
 
     /// True when the active session can serve cache-backed stills from `scrubThumbnail` with no

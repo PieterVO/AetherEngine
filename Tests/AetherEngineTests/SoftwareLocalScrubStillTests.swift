@@ -11,6 +11,9 @@ import Foundation
 @MainActor
 struct SoftwareLocalScrubStillTests {
 
+    /// The 4 s fixture, built once per process and left for the temporary directory to reclaim.
+    private static let fixture = Task { try await ItemSwapStillTests.fixtureURL() }
+
     private func loadSoftware(_ file: URL) async throws -> AetherEngine {
         let engine = try AetherEngine()
         var options = LoadOptions()
@@ -30,8 +33,7 @@ struct SoftwareLocalScrubStillTests {
     @Test("a local software session advertises stills and decodes the frame it was asked for")
     func stillsFollowTheTarget() async throws {
         // The fixture paints frame n at grey level 2n, 30 frames a second, so brightness names the time.
-        let file = try await ItemSwapStillTests.fixtureURL()
-        defer { try? FileManager.default.removeItem(at: file) }
+        let file = try await Self.fixture.value
         let engine = try await loadSoftware(file)
         defer { engine.stop() }
         #expect(engine.supportsCacheBackedStills)
@@ -46,19 +48,20 @@ struct SoftwareLocalScrubStillTests {
 
     @Test("the preview call answers too, refined or not, and honours cancellation")
     func previewFrames() async throws {
-        let file = try await ItemSwapStillTests.fixtureURL()
-        defer { try? FileManager.default.removeItem(at: file) }
+        let file = try await Self.fixture.value
         let engine = try await loadSoftware(file)
         defer { engine.stop() }
 
         let coarse = try #require(await engine.scrubPreviewFrame(
             atSeconds: 2.0, refined: false, maxWidth: 64, isCancelled: { false }))
         #expect(!coarse.refined)
-        #expect(coarse.actualSeconds == 2.0)
+        // The decoded frame's own time: the keyframe at or before the target, never after it.
+        #expect(coarse.actualSeconds <= 2.0 && coarse.actualSeconds >= 0)
 
         let exact = try #require(await engine.scrubPreviewFrame(
             atSeconds: 2.0, refined: true, maxWidth: 64, isCancelled: { false }))
         #expect(exact.refined)
+        #expect(abs(exact.actualSeconds - 2.0) < 0.1, "actual \(exact.actualSeconds)")
         let earlier = try #require(await engine.scrubPreviewFrame(
             atSeconds: 1.0, refined: true, maxWidth: 64, isCancelled: { false }))
         // A second apart is 30 frames, 60 grey levels; colour conversion shifts both by the same
@@ -75,8 +78,7 @@ struct SoftwareLocalScrubStillTests {
 
     @Test("one extractor serves every request and is released with the session")
     func extractorIsKeptAndReleased() async throws {
-        let file = try await ItemSwapStillTests.fixtureURL()
-        defer { try? FileManager.default.removeItem(at: file) }
+        let file = try await Self.fixture.value
         let engine = try await loadSoftware(file)
         _ = await engine.scrubThumbnail(atSeconds: 1, maxWidth: 64)
         _ = await engine.scrubThumbnail(atSeconds: 2, maxWidth: 64)

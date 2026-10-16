@@ -27,6 +27,35 @@ private final class RecordingTransport: SoftwareNowPlayingTransport {
     }
 }
 
+private final class FakeCommand: RemoteCommandHandle {
+    var isEnabled: Bool
+    var targets = 0
+    init(enabled: Bool) { isEnabled = enabled }
+    func addTarget(handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus) -> Any {
+        targets += 1
+        return NSObject()
+    }
+    func removeTarget(_ target: Any?) { targets -= 1 }
+}
+
+private final class FakeSurface: RemoteCommandSurface {
+    let all = [FakeCommand(enabled: false), FakeCommand(enabled: true), FakeCommand(enabled: false),
+               FakeCommand(enabled: true), FakeCommand(enabled: false), FakeCommand(enabled: false)]
+    var play: any RemoteCommandHandle { all[0] }
+    var pause: any RemoteCommandHandle { all[1] }
+    var togglePlayPause: any RemoteCommandHandle { all[2] }
+    var skipForward: any RemoteCommandHandle { all[3] }
+    var skipBackward: any RemoteCommandHandle { all[4] }
+    var changePosition: any RemoteCommandHandle { all[5] }
+    var interval: Double?
+    func setSkipInterval(_ seconds: Double) { interval = seconds }
+}
+
+private final class FakeInfoCenter: NowPlayingInfoStore {
+    var nowPlayingInfo: [String: Any]?
+    var playbackState: MPNowPlayingPlaybackState = .unknown
+}
+
 @MainActor
 private final class RecordingSink: SoftwareNowPlayingSink {
     var handler: (@MainActor (SoftwareNowPlayingCommand) -> Void)?
@@ -255,11 +284,60 @@ struct SoftwareNowPlayingTests {
     func enginePrimaryOptIn() throws {
         let engine = try AetherEngine()
         engine.ownsSoftwareNowPlaying = true
+        engine.makeSoftwareNowPlayingSink = { RecordingSink() }
         engine.startSoftwareNowPlaying()
         #expect(engine.softwareNowPlaying != nil)
         #expect(engine.softwareNowPlayingActive)
         engine.stopSoftwareNowPlaying()
         #expect(engine.softwareNowPlaying == nil)
         #expect(!engine.softwareNowPlayingActive)
+    }
+
+    @Test("a backward reposition counts as the clock moving, not a stall")
+    func backwardRepositionIsNotAStall() {
+        var now: TimeInterval = 1000
+        let t = RecordingTransport(), sink = RecordingSink()
+        let c = SoftwareNowPlayingController(sink: sink, transport: t, uptime: { now })
+        t.state = .playing; t.currentTime = 100
+        c.refresh(requestedRate: 1, isBuffering: false)
+        now += 0.25
+        c.clockTick(40)
+        now += 0.25
+        c.clockTick(40.25)
+        #expect(rate(sink.published.last?.info) == 1)
+        #expect(elapsed(sink.published.last?.info) == 40)
+    }
+
+    @Test("the sink restores command enablement and removes only its own targets on deactivate")
+    func sinkRestoresCommands() {
+        let surface = FakeSurface(), center = FakeInfoCenter()
+        let sink = SystemNowPlayingSink(infoCenter: center, commands: surface)
+        sink.activate(skipInterval: 15) { _ in }
+        #expect(surface.interval == 15)
+        #expect(surface.all.allSatisfy { $0.isEnabled && $0.targets == 1 })
+        sink.setSeekingEnabled(false)
+        sink.deactivate()
+        #expect(surface.all.map(\.isEnabled) == [false, true, false, true, false, false])
+        #expect(surface.all.allSatisfy { $0.targets == 0 })
+    }
+
+    @Test("deactivate clears the card only while the center still holds what the sink published")
+    func sinkClearsOnlyItsOwnCard() {
+        let surface = FakeSurface(), center = FakeInfoCenter()
+        let sink = SystemNowPlayingSink(infoCenter: center, commands: surface)
+        sink.activate(skipInterval: 10) { _ in }
+        sink.publish(info: [MPMediaItemPropertyTitle: "Mine", MPMediaItemPropertyPlaybackDuration: 60.0],
+                     playbackState: .playing)
+        sink.deactivate()
+        #expect(center.nowPlayingInfo == nil)
+        #expect(center.playbackState == .stopped)
+
+        sink.activate(skipInterval: 10) { _ in }
+        sink.publish(info: [MPMediaItemPropertyTitle: "Mine"], playbackState: .playing)
+        center.nowPlayingInfo = [MPMediaItemPropertyTitle: "Someone else"]
+        center.playbackState = .paused
+        sink.deactivate()
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Someone else")
+        #expect(center.playbackState == .paused)
     }
 }

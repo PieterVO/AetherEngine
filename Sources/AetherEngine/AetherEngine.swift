@@ -1974,6 +1974,8 @@ public final class AetherEngine: ObservableObject {
     var softwareCancellables: Set<AnyCancellable> = []
     /// Now-Playing card and remote commands for the software host, which has no AVPlayer to supply them.
     var softwareNowPlaying: SoftwareNowPlayingController?
+    /// Where the software host's Now-Playing goes; replaced by tests so they never touch the shared centers.
+    var makeSoftwareNowPlayingSink: @MainActor () -> SoftwareNowPlayingSink = { SystemNowPlayingSink() }
 
     /// FFmpeg audio-only host (music). Mutually exclusive with nativeHost/softwareHost; stopInternal tears all down.
     var audioHost: AudioPlaybackHost?

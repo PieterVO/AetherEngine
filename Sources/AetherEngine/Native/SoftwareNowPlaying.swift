@@ -207,14 +207,15 @@ final class SoftwareNowPlayingController {
         }
     }
 
-    /// The ~10 Hz clock. The software path never reports buffering, so a clock that stands still while
+    /// The clock, ticking at 4 Hz (the host's 0.25 s timer; ticks pause while a seek is in flight). The software path never reports buffering, so a clock that stands still while
     /// playing is the stall signal: rate goes to 0 until it advances again. Otherwise republish only
     /// when the position left the extrapolation the system holds (a seek while paused, a reposition).
     func clockTick(_ elapsed: Double) {
         guard let published, let transport else { return }
         let now = uptime()
         if transport.state == .playing {
-            if elapsed > lastTickElapsed + 0.001 {
+            // Either direction is the clock moving; a backward reposition is not a stall.
+            if abs(elapsed - lastTickElapsed) > 0.001 {
                 lastTickElapsed = elapsed
                 lastAdvanceAt = now
                 if stalled {
@@ -294,19 +295,80 @@ enum SoftwareNowPlayingIdentity {
     }
 }
 
+/// The slice of `MPNowPlayingInfoCenter` the sink writes, so a test can stand in for the shared center.
+protocol NowPlayingInfoStore: AnyObject {
+    var nowPlayingInfo: [String: Any]? { get set }
+    var playbackState: MPNowPlayingPlaybackState { get set }
+}
+
+extension MPNowPlayingInfoCenter: NowPlayingInfoStore {}
+
+/// The slice of `MPRemoteCommand` the sink drives.
+protocol RemoteCommandHandle: AnyObject {
+    var isEnabled: Bool { get set }
+    func addTarget(handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus) -> Any
+    func removeTarget(_ target: Any?)
+}
+
+extension MPRemoteCommand: RemoteCommandHandle {}
+
+/// The commands the software host serves, plus the skip distance. `MPRemoteCommandCenter` cannot be
+/// built by a test, so the sink talks to this instead.
+protocol RemoteCommandSurface: AnyObject {
+    var play: any RemoteCommandHandle { get }
+    var pause: any RemoteCommandHandle { get }
+    var togglePlayPause: any RemoteCommandHandle { get }
+    var skipForward: any RemoteCommandHandle { get }
+    var skipBackward: any RemoteCommandHandle { get }
+    var changePosition: any RemoteCommandHandle { get }
+    func setSkipInterval(_ seconds: Double)
+}
+
+final class SharedRemoteCommandSurface: RemoteCommandSurface {
+    private var center: MPRemoteCommandCenter { .shared() }
+    var play: any RemoteCommandHandle { center.playCommand }
+    var pause: any RemoteCommandHandle { center.pauseCommand }
+    var togglePlayPause: any RemoteCommandHandle { center.togglePlayPauseCommand }
+    var skipForward: any RemoteCommandHandle { center.skipForwardCommand }
+    var skipBackward: any RemoteCommandHandle { center.skipBackwardCommand }
+    var changePosition: any RemoteCommandHandle { center.changePlaybackPositionCommand }
+    func setSkipInterval(_ seconds: Double) {
+        center.skipForwardCommand.preferredIntervals = [NSNumber(value: seconds)]
+        center.skipBackwardCommand.preferredIntervals = [NSNumber(value: seconds)]
+    }
+}
+
 /// MediaPlayer-backed sink on the shared info and command centers. `MPNowPlayingSession` is not used:
 /// it asserts on an empty player list, and this host has no `AVPlayer` to give it.
+///
+/// The centers are process-wide, so the sink is a polite tenant: `deactivate` removes only its own
+/// targets, restores each command's `isEnabled` to what it was at `activate`, and clears the info and
+/// playback state only while the center still holds what this sink last published (another owner that
+/// took over in the meantime keeps its card).
 @MainActor
 final class SystemNowPlayingSink: SoftwareNowPlayingSink {
-    private var infoCenter: MPNowPlayingInfoCenter { .default() }
-    private var commandCenter: MPRemoteCommandCenter { .shared() }
-    private var tokens: [(MPRemoteCommand, Any)] = []
+    private let infoCenter: any NowPlayingInfoStore
+    private let commands: any RemoteCommandSurface
+    private var tokens: [(any RemoteCommandHandle, Any)] = []
+    private var priorEnabled: [(any RemoteCommandHandle, Bool)] = []
+    private var lastPublished: [String: Any]?
+
+    init(infoCenter: any NowPlayingInfoStore = MPNowPlayingInfoCenter.default(),
+         commands: any RemoteCommandSurface = SharedRemoteCommandSurface()) {
+        self.infoCenter = infoCenter
+        self.commands = commands
+    }
+
+    private var allCommands: [any RemoteCommandHandle] {
+        [commands.play, commands.pause, commands.togglePlayPause,
+         commands.skipForward, commands.skipBackward, commands.changePosition]
+    }
 
     func activate(skipInterval: Double, handler: @escaping @MainActor (SoftwareNowPlayingCommand) -> Void) {
-        let c = commandCenter
+        priorEnabled = allCommands.map { ($0, $0.isEnabled) }
         // MediaPlayer delivers commands on a queue of its own (not the main actor), so the target is
         // explicitly @Sendable and hops to the main actor itself instead of inheriting this isolation.
-        func add(_ command: MPRemoteCommand,
+        func add(_ command: any RemoteCommandHandle,
                  _ make: @escaping @Sendable (MPRemoteCommandEvent) -> SoftwareNowPlayingCommand?) {
             command.isEnabled = true
             let token = command.addTarget { @Sendable event in
@@ -316,37 +378,45 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
             }
             tokens.append((command, token))
         }
-        add(c.playCommand) { _ in .play }
-        add(c.pauseCommand) { _ in .pause }
-        add(c.togglePlayPauseCommand) { _ in .togglePlayPause }
-        let interval = NSNumber(value: skipInterval)
-        c.skipForwardCommand.preferredIntervals = [interval]
-        c.skipBackwardCommand.preferredIntervals = [interval]
-        add(c.skipForwardCommand) { ($0 as? MPSkipIntervalCommandEvent).map { .skip(seconds: $0.interval) } }
-        add(c.skipBackwardCommand) { ($0 as? MPSkipIntervalCommandEvent).map { .skip(seconds: -$0.interval) } }
-        add(c.changePlaybackPositionCommand) {
+        add(commands.play) { _ in .play }
+        add(commands.pause) { _ in .pause }
+        add(commands.togglePlayPause) { _ in .togglePlayPause }
+        commands.setSkipInterval(skipInterval)
+        add(commands.skipForward) { ($0 as? MPSkipIntervalCommandEvent).map { .skip(seconds: $0.interval) } }
+        add(commands.skipBackward) { ($0 as? MPSkipIntervalCommandEvent).map { .skip(seconds: -$0.interval) } }
+        add(commands.changePosition) {
             ($0 as? MPChangePlaybackPositionCommandEvent).map { .changePosition(to: $0.positionTime) }
         }
     }
 
     func setSeekingEnabled(_ enabled: Bool) {
-        let c = commandCenter
-        c.skipForwardCommand.isEnabled = enabled
-        c.skipBackwardCommand.isEnabled = enabled
-        c.changePlaybackPositionCommand.isEnabled = enabled
+        commands.skipForward.isEnabled = enabled
+        commands.skipBackward.isEnabled = enabled
+        commands.changePosition.isEnabled = enabled
     }
 
     func publish(info: [String: Any]?, playbackState: MPNowPlayingPlaybackState) {
+        lastPublished = info
         infoCenter.nowPlayingInfo = info
         infoCenter.playbackState = playbackState
     }
 
     func deactivate() {
-        for (command, token) in tokens {
-            command.removeTarget(token)
-            command.isEnabled = false
-        }
+        for (command, token) in tokens { command.removeTarget(token) }
         tokens.removeAll()
-        publish(info: nil, playbackState: .stopped)
+        for (command, enabled) in priorEnabled { command.isEnabled = enabled }
+        priorEnabled.removeAll()
+        if let last = lastPublished, Self.sameCard(infoCenter.nowPlayingInfo, last) {
+            infoCenter.nowPlayingInfo = nil
+            infoCenter.playbackState = .stopped
+        }
+        lastPublished = nil
+    }
+
+    /// Title and duration identify the card without comparing artwork objects or the moving elapsed time.
+    static func sameCard(_ held: [String: Any]?, _ ours: [String: Any]) -> Bool {
+        guard let held else { return false }
+        return held[MPMediaItemPropertyTitle] as? String == ours[MPMediaItemPropertyTitle] as? String
+            && held[MPMediaItemPropertyPlaybackDuration] as? Double == ours[MPMediaItemPropertyPlaybackDuration] as? Double
     }
 }

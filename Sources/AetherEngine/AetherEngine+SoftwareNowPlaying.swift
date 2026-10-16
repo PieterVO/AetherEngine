@@ -11,7 +11,7 @@ extension AetherEngine {
         stopSoftwareNowPlaying()
         guard Self.ownsNowPlaying(hostOptIn: ownsSoftwareNowPlaying, role: loadedOptions.sharedOutputRole)
         else { return }
-        let sink = SystemNowPlayingSink()
+        let sink = makeSoftwareNowPlayingSink()
         let controller = SoftwareNowPlayingController(sink: sink, transport: self)
         softwareNowPlaying = controller
         controller.start(skipInterval: remoteSkipInterval)

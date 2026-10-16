@@ -370,6 +370,16 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
                 CTLineDraw(entry.line, ctx)
                 ctx.restoreGState()
             }
+            if edge == .uniform {
+                // Knock the glyph area out of the outline first: a translucent text colour would
+                // otherwise sit over the stroke's inner half instead of over the picture.
+                ctx.saveGState()
+                ctx.setBlendMode(.clear)
+                ctx.setTextDrawingMode(.fill)
+                ctx.textPosition = CGPoint(x: textX, y: baseline)
+                CTLineDraw(entry.line, ctx)
+                ctx.restoreGState()
+            }
             ctx.saveGState()
             if edge != .uniform { applyEdge(edge, in: ctx, fontSize: layout.fontSize) }
             ctx.setTextDrawingMode(.fill)

@@ -123,8 +123,17 @@ final class FrameDecodeContext: @unchecked Sendable {
     /// request unchanged when the duration is unknown (<= 0) or the request is within tolerance of the
     /// end; otherwise the last safely-decodable position.
     ///
-    /// `duration` is a span, and `requested` is on the source axis, which begins at `start` (the
-    /// first timestamp of a file that does not start at 0). The end is therefore `start + duration`.
+    /// `duration` is the container's span, measured from the container's own start time, and
+    /// `requested` is on the source axis. `start` is that container origin (see `clampOrigin`), so
+    /// the end is `start + duration`.
+    /// The origin the container's duration is measured from: `AVFormatContext.start_time` (in
+    /// AV_TIME_BASE units) when the container has one, else the video stream's own start. They differ
+    /// when another stream begins earlier than the video, and the span runs from the earlier one.
+    static func clampOrigin(formatStartTime: Int64, videoStartSeconds: Double?) -> Double {
+        if formatStartTime != Int64.min { return Double(formatStartTime) / Double(AV_TIME_BASE) }
+        return videoStartSeconds ?? 0
+    }
+
     static func clampSeekSeconds(requested: Double, duration: Double, start: Double = 0) -> Double {
         let origin = start.isFinite ? max(0, start) : 0
         guard duration > 0, requested > origin + duration + pastDurationTolerance else { return requested }
@@ -461,8 +470,10 @@ final class FrameDecodeContext: @unchecked Sendable {
         // past EOF returns a blank garbage frame that still reports success (AE#105). Both the seek and
         // the forward-decode target below must use the clamped value or snapshot would chase an
         // unreachable PTS forever.
-        let sourceStart = presentationStartSeconds ?? Double(demuxer.formatStartTime) / Double(AV_TIME_BASE)
-        let seekSeconds = Self.clampSeekSeconds(requested: seconds, duration: demuxer.duration, start: sourceStart)
+        // The target axis stays the video stream's; only the end of the span is measured from the container.
+        let containerStart = Self.clampOrigin(formatStartTime: demuxer.formatStartTime,
+                                              videoStartSeconds: presentationStartSeconds)
+        let seekSeconds = Self.clampSeekSeconds(requested: seconds, duration: demuxer.duration, start: containerStart)
         if seekSeconds != seconds {
             EngineLog.emit(
                 "[FrameExtractor] still past duration: t=\(String(format: "%.2f", seconds))s "

@@ -149,6 +149,20 @@ struct SubtitleCaptionStyleTests {
 
     // MARK: - Rendering
 
+    /// How many pixels hold each exact RGBA value (nothing for fully transparent ones).
+    private func histogram(_ image: CGImage) -> [UInt32: Int] {
+        guard let ctx = CGContext(data: nil, width: image.width, height: image.height,
+                                  bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = ctx.data else { return [:] }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let words = data.assumingMemoryBound(to: UInt32.self)
+        var out: [UInt32: Int] = [:]
+        for i in 0..<(image.width * image.height) where words[i] >> 24 != 0 { out[words[i], default: 0] += 1 }
+        return out
+    }
+
     /// Pixels with alpha above zero, and pixels that are exactly opaque white.
     private func pixelCounts(_ image: CGImage) -> (visible: Int, white: Int) {
         guard let ctx = CGContext(data: nil, width: image.width, height: image.height,
@@ -165,6 +179,9 @@ struct SubtitleCaptionStyleTests {
         }
         return (visible, white)
     }
+
+    private static let goldenStandardVisible = 4352
+    private static let goldenStandardWhite = 410
 
     private let cue = SubtitleCue(id: 1, startTime: 0, endTime: 10, body: .text("Caption style"))
 
@@ -187,12 +204,37 @@ struct SubtitleCaptionStyleTests {
         #expect(outlined.white == bare.white)
     }
 
+    @Test("a translucent text colour is not laid over the outline")
+    func translucentTextOverOutline() throws {
+        func render(_ edge: SubtitleCaptionStyle.Choice<SubtitleCaptionStyle.EdgeStyle>?) throws -> [UInt32: Int] {
+            histogram(try #require(SubtitleFrameCompositor.renderOverlay(
+                for: [cue], frameWidth: 640, frameHeight: 360,
+                style: SubtitleCaptionStyle(textOpacity: .init(0.5), backgroundOpacity: .init(0), edgeStyle: edge))))
+        }
+        let bare = try render(nil)
+        let outlined = try render(.init(.uniform))
+        // The glyph interior is the most common pixel value of the bare text.
+        let interior = try #require(bare.max { $0.value < $1.value }?.key)
+        #expect(bare[interior]! > 100)
+        #expect(outlined[interior] == bare[interior])
+    }
+
     @Test("the default style renders the same overlay as before styles existed")
     func standardIsUnchanged() throws {
         let plain = try #require(SubtitleFrameCompositor.renderOverlay(for: [cue], frameWidth: 640, frameHeight: 360))
         let styled = try #require(SubtitleFrameCompositor.renderOverlay(for: [cue], frameWidth: 640, frameHeight: 360,
                                                                         style: .standard))
         #expect(plain.dataProvider?.data == styled.dataProvider?.data)
+        // Not only equal to itself: the long-standing look measured when this type was introduced
+        // (opaque white text on a 60% black line background), so a change to the defaults shows here.
+        // The tolerance absorbs glyph-rendering differences between system versions.
+        let counts = pixelCounts(plain)
+        #expect(abs(counts.visible - Self.goldenStandardVisible) <= Self.goldenStandardVisible / 25,
+                "visible \(counts.visible)")
+        #expect(abs(counts.white - Self.goldenStandardWhite) <= max(20, Self.goldenStandardWhite / 10),
+                "white \(counts.white)")
+        let background = histogram(plain).filter { $0.key == 0x99000000 }   // alpha 0.6, premultiplied black
+        #expect(background.values.first ?? 0 > counts.visible / 2)
     }
 
     private func frameBytes(_ buffer: CVPixelBuffer) -> Data {
@@ -260,20 +302,29 @@ struct SubtitleCaptionStyleTests {
         #expect(frameBytes(compositor.composite(input, ptsSeconds: 1.2)) == standard)
     }
 
-    @Test("a released observation no longer reaches its handler")
+    @Test("a notification already in flight cannot reach the handler once the token is released")
     func observationStops() {
-        final class Flag: @unchecked Sendable {
-            private let lock = NSLock(); private var set = false
-            func raise() { lock.lock(); set = true; lock.unlock() }
-            var isSet: Bool { lock.lock(); defer { lock.unlock() }; return set }
+        final class Box: @unchecked Sendable {
+            private let lock = NSLock()
+            private var calls = 0
+            private var fire: (@Sendable (Notification) -> Void)?
+            func bump() { lock.lock(); calls += 1; lock.unlock() }
+            var count: Int { lock.lock(); defer { lock.unlock() }; return calls }
+            func store(_ f: @escaping @Sendable (Notification) -> Void) { lock.lock(); fire = f; lock.unlock() }
+            func deliver() { lock.lock(); let f = fire; lock.unlock(); f?(Notification(name: .init("x"))) }
         }
-        let flag = Flag()
+        // The seeded style differs from the live one, so an open observation always has news to deliver.
+        let seed = SubtitleCaptionStyle(backgroundOpacity: .init(0.123))
+        let box = Box()
         var observation: SubtitleCaptionStyle.Observation? = SubtitleCaptionStyle.observeChanges(
-            startingFrom: SubtitleCaptionStyle(backgroundOpacity: .init(0.123))) { _ in flag.raise() }
+            startingFrom: seed, fireSink: { box.store($0) }) { _ in box.bump() }
+        box.deliver()
+        #expect(box.count == 1, "control: an open observation delivers")
+        // Releasing the token removes the observers, but a delivery that was already under way holds
+        // the closure; only the gate stops it.
         observation = nil
-        NotificationCenter.default.post(
-            name: Notification.Name(kMACaptionAppearanceSettingsChangedNotification as String), object: nil)
-        #expect(!flag.isSet)
+        box.deliver()
+        #expect(box.count == 1)
         _ = observation
     }
 }

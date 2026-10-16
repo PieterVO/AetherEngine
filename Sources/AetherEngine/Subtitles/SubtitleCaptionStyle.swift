@@ -38,8 +38,11 @@ public struct SubtitleCaptionStyle: Sendable, Equatable {
             self.precedence = precedence
         }
 
-        /// The value to use given what the cue carries, or nil when neither has one.
-        func resolved(cue: Value?) -> Value? {
+        /// The value to use given what the cue carries, by this field's precedence: `overridesCue`
+        /// returns the user's value, `yieldsToCue` returns the cue's when it has one and the user's
+        /// otherwise. A host applies this only to a field whose `Choice` is non-nil, and falls back to
+        /// its own default for one that is nil.
+        public func resolved(cue: Value?) -> Value {
             switch precedence {
             case .overridesCue: return value
             case .yieldsToCue: return cue ?? value
@@ -268,6 +271,7 @@ public struct SubtitleCaptionStyle: Sendable, Equatable {
 
     /// `observeChanges` for a caller that has just read the style and wants no second read.
     static func observeChanges(startingFrom initial: SubtitleCaptionStyle,
+                               fireSink: (@Sendable (@escaping @Sendable (Notification) -> Void) -> Void)? = nil,
                                _ handler: @escaping @Sendable (SubtitleCaptionStyle) -> Void) -> Observation {
         let last = LastStyle(initial)
         let gate = Gate()
@@ -278,6 +282,7 @@ public struct SubtitleCaptionStyle: Sendable, Equatable {
             guard gate.isOpen, last.replace(with: style) else { return }
             handler(style)
         }
+        fireSink?(fire)   // test seam: lets a test deliver a notification that is already in flight
         var tokens = [NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil, using: fire)]
         #if os(macOS)
         // The setting is changed in another process, and macOS delivers it on the distributed centre.

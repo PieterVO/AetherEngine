@@ -10,7 +10,9 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **The software host (the Dolby Vision FEL route) now shows a Now-Playing card and answers remote commands.** With `ownsVideoNowPlayingSession` set, the engine publishes title, artwork, duration, elapsed and rate from the staged `externalMetadata` / `setVideoNowPlayingInfo` and serves play, pause, toggle, skip and change-position from the Siri Remote, headsets, Control Center and media keys, republishing on seek, pause, speed change, stall and end. iOS and tvOS use a player-less `MPNowPlayingSession`, exposed as `videoNowPlayingSession`; macOS uses the shared centers. The AVPlayer paths are unchanged.
 
 ## [7.38.1] - 2026-10-16
 

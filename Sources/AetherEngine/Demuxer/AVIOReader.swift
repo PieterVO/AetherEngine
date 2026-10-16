@@ -741,8 +741,9 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
     /// Effective per-fetch budget for a detour block: the tight interactive cap, never exceeding the
     /// caller's chunk budget (still-extraction passes a smaller one; it never reaches this path, but
     /// the clamp keeps the invariant). Internal so the bound is unit-tested without a live origin.
-    static func effectiveDetourBudget(chunkRequestTimeout: TimeInterval) -> TimeInterval {
-        min(detourFetchBudgetSeconds, chunkRequestTimeout)
+    static func effectiveDetourBudget(chunkRequestTimeout: TimeInterval,
+                                      cap: TimeInterval = detourFetchBudgetSeconds) -> TimeInterval {
+        min(cap, chunkRequestTimeout)
     }
 
     // Cap on CONSECUTIVE rate-limited (429/503/509) network attempts before giving up cleanly.
@@ -986,6 +987,9 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
     /// the same reason `connStallTimeout` is one: a process-wide hook would leak into whatever suite
     /// runs concurrently.
     private let detourBlockIdleSeconds: TimeInterval
+    // The interactive cap on a detour fetch; tests that assert a block lands raise it, since 4 s is
+    // a wall clock a loaded runner can spend before the fetch does.
+    private let detourFetchBudget: TimeInterval
     // Re-anchor run tracking (demux-thread-only): the file offset the next sequential detour read
     // would continue from, and how many contiguous bytes the current detour run has served.
     private var detourRunNextExpected: Int64 = -1
@@ -1144,7 +1148,7 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
     private let probeDrainLock = NSLock()
     private var drainingProbeRequest = false
 
-    init(url: URL, extraHeaders: [String: String] = [:], label: String = "source", chunkSize: Int = 4 * 1024 * 1024, prefetchEnabled: Bool = true, isLive: Bool = false, chunkRequestTimeout: TimeInterval = 35, chunkMaxRetries: Int = 3, boundedInitialFetch: Int64? = nil, sequentialOnly: Bool = false, connStallTimeout: TimeInterval = AVIOReader.connStallTimeoutDefault, windowHighWater: Int? = nil, streamHighWater: Int? = nil, detourIdleSeconds: TimeInterval? = nil, heldConnection: Bool = false, probeControl: ProbeControl? = nil, probeRequestSession: URLSession? = nil, sourceOpenPolicy: SourceOpenPolicy = .init(), requestHeaderStore: RequestHeaderStore? = nil) {
+    init(url: URL, extraHeaders: [String: String] = [:], label: String = "source", chunkSize: Int = 4 * 1024 * 1024, prefetchEnabled: Bool = true, isLive: Bool = false, chunkRequestTimeout: TimeInterval = 35, chunkMaxRetries: Int = 3, boundedInitialFetch: Int64? = nil, sequentialOnly: Bool = false, connStallTimeout: TimeInterval = AVIOReader.connStallTimeoutDefault, windowHighWater: Int? = nil, streamHighWater: Int? = nil, detourIdleSeconds: TimeInterval? = nil, detourFetchBudget: TimeInterval? = nil, heldConnection: Bool = false, probeControl: ProbeControl? = nil, probeRequestSession: URLSession? = nil, sourceOpenPolicy: SourceOpenPolicy = .init(), requestHeaderStore: RequestHeaderStore? = nil) {
         self.sourceOpenPolicy = sourceOpenPolicy
         self.probeControl = probeControl
         self.probeRequestSession = probeControl == nil ? nil : probeRequestSession
@@ -1167,6 +1171,7 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
             ?? (isLive ? Self.liveWinHighWaterDefault : Self.winHighWaterDefault))
         self.streamHighWater = max(1, streamHighWater ?? Self.streamHighWaterDefault)
         self.detourBlockIdleSeconds = detourIdleSeconds ?? Self.detourBlockIdleSecondsDefault
+        self.detourFetchBudget = detourFetchBudget ?? Self.detourFetchBudgetSeconds
         self.heldConnectionEnabled = heldConnection
     }
 
@@ -2891,7 +2896,7 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
     /// took the last slot of a two-request origin and left the inner one waiting its whole budget for
     /// a slot this same fetch was holding, +4 s per block, with a third request on the books.
     private func detourFetchBlock(from offset: Int64, size: Int) -> DetourFetch {
-        let budget = Self.effectiveDetourBudget(chunkRequestTimeout: chunkRequestTimeout)
+        let budget = Self.effectiveDetourBudget(chunkRequestTimeout: chunkRequestTimeout, cap: detourFetchBudget)
         let rangeEnd = offset + Int64(size) - 1
         var request = URLRequest(url: requestURL())
         request.setValue("bytes=\(offset)-\(rangeEnd)", forHTTPHeaderField: "Range")
@@ -3051,7 +3056,7 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
         }
         var request = URLRequest(url: url)
         request.setValue("bytes=-\(Self.tailPrefetchBytes)", forHTTPHeaderField: "Range")
-        request.timeoutInterval = Self.effectiveDetourBudget(chunkRequestTimeout: chunkRequestTimeout)
+        request.timeoutInterval = Self.effectiveDetourBudget(chunkRequestTimeout: chunkRequestTimeout, cap: detourFetchBudget)
         applyExtraHeaders(&request)
 
         // A delegate rather than a completion handler, and the distinction is load-bearing: a

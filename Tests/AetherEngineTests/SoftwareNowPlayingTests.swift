@@ -326,18 +326,52 @@ struct SoftwareNowPlayingTests {
         let surface = FakeSurface(), center = FakeInfoCenter()
         let sink = SystemNowPlayingSink(infoCenter: center, commands: surface)
         sink.activate(skipInterval: 10) { _ in }
-        sink.publish(info: [MPMediaItemPropertyTitle: "Mine", MPMediaItemPropertyPlaybackDuration: 60.0],
-                     playbackState: .playing)
+        let mine: [String: Any] = [
+            MPMediaItemPropertyTitle: "Mine", MPMediaItemPropertyPlaybackDuration: 60.0,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: 5.0, MPNowPlayingInfoPropertyPlaybackRate: 1.0]
+        sink.publish(info: mine, playbackState: .playing)
         sink.deactivate()
         #expect(center.nowPlayingInfo == nil)
         #expect(center.playbackState == .stopped)
 
+        // A foreign card survives: different title, same title and duration but another elapsed value,
+        // and one with no title or duration at all.
+        var sameTitle = mine
+        sameTitle[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 33.0
+        let foreign: [[String: Any]] = [
+            [MPMediaItemPropertyTitle: "Someone else", MPNowPlayingInfoPropertyElapsedPlaybackTime: 5.0,
+             MPNowPlayingInfoPropertyPlaybackRate: 1.0],
+            sameTitle,
+            [MPNowPlayingInfoPropertyElapsedPlaybackTime: 5.0, MPNowPlayingInfoPropertyPlaybackRate: 1.0]]
+        for card in foreign {
+            sink.activate(skipInterval: 10) { _ in }
+            sink.publish(info: mine, playbackState: .playing)
+            center.nowPlayingInfo = card
+            center.playbackState = .paused
+            sink.deactivate()
+            #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double
+                    == card[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double)
+            #expect(center.nowPlayingInfo?.count == card.count)
+            #expect(center.playbackState == .paused)
+        }
+
+        // A card with no elapsed value never matches, even against an identical one.
+        let bare: [String: Any] = [MPMediaItemPropertyTitle: "Live"]
         sink.activate(skipInterval: 10) { _ in }
-        sink.publish(info: [MPMediaItemPropertyTitle: "Mine"], playbackState: .playing)
-        center.nowPlayingInfo = [MPMediaItemPropertyTitle: "Someone else"]
-        center.playbackState = .paused
+        sink.publish(info: bare, playbackState: .playing)
         sink.deactivate()
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Someone else")
-        #expect(center.playbackState == .paused)
+        #expect(center.nowPlayingInfo != nil)
+    }
+
+    @Test("a command someone else re-enabled or disabled meanwhile keeps its state on deactivate")
+    func sinkRespectsForeignEnablement() {
+        let surface = FakeSurface(), center = FakeInfoCenter()
+        let sink = SystemNowPlayingSink(infoCenter: center, commands: surface)
+        sink.activate(skipInterval: 10) { _ in }
+        surface.all[0].isEnabled = false   // play: we wrote true, a foreign owner turned it off
+        sink.deactivate()
+        #expect(surface.all[0].isEnabled == false)
+        #expect(surface.all[1].isEnabled == true)   // pause: untouched, restored to its prior true
+        #expect(surface.all[2].isEnabled == false)  // toggle: prior false restored
     }
 }

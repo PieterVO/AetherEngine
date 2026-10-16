@@ -351,6 +351,8 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
     private let commands: any RemoteCommandSurface
     private var tokens: [(any RemoteCommandHandle, Any)] = []
     private var priorEnabled: [(any RemoteCommandHandle, Bool)] = []
+    /// Our last `isEnabled` write per command; restored only while the command still holds it.
+    private var written: [ObjectIdentifier: Bool] = [:]
     private var lastPublished: [String: Any]?
 
     init(infoCenter: any NowPlayingInfoStore = MPNowPlayingInfoCenter.default(),
@@ -366,11 +368,12 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
 
     func activate(skipInterval: Double, handler: @escaping @MainActor (SoftwareNowPlayingCommand) -> Void) {
         priorEnabled = allCommands.map { ($0, $0.isEnabled) }
+        written.removeAll()
         // MediaPlayer delivers commands on a queue of its own (not the main actor), so the target is
         // explicitly @Sendable and hops to the main actor itself instead of inheriting this isolation.
         func add(_ command: any RemoteCommandHandle,
                  _ make: @escaping @Sendable (MPRemoteCommandEvent) -> SoftwareNowPlayingCommand?) {
-            command.isEnabled = true
+            setEnabled(command, true)
             let token = command.addTarget { @Sendable event in
                 guard let decoded = make(event) else { return .commandFailed }
                 Task { @MainActor in handler(decoded) }
@@ -390,9 +393,14 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
     }
 
     func setSeekingEnabled(_ enabled: Bool) {
-        commands.skipForward.isEnabled = enabled
-        commands.skipBackward.isEnabled = enabled
-        commands.changePosition.isEnabled = enabled
+        setEnabled(commands.skipForward, enabled)
+        setEnabled(commands.skipBackward, enabled)
+        setEnabled(commands.changePosition, enabled)
+    }
+
+    private func setEnabled(_ command: any RemoteCommandHandle, _ enabled: Bool) {
+        command.isEnabled = enabled
+        written[ObjectIdentifier(command)] = enabled
     }
 
     func publish(info: [String: Any]?, playbackState: MPNowPlayingPlaybackState) {
@@ -404,8 +412,11 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
     func deactivate() {
         for (command, token) in tokens { command.removeTarget(token) }
         tokens.removeAll()
-        for (command, enabled) in priorEnabled { command.isEnabled = enabled }
+        for (command, enabled) in priorEnabled where written[ObjectIdentifier(command)] == command.isEnabled {
+            command.isEnabled = enabled
+        }
         priorEnabled.removeAll()
+        written.removeAll()
         if let last = lastPublished, Self.sameCard(infoCenter.nowPlayingInfo, last) {
             infoCenter.nowPlayingInfo = nil
             infoCenter.playbackState = .stopped
@@ -413,10 +424,19 @@ final class SystemNowPlayingSink: SoftwareNowPlayingSink {
         lastPublished = nil
     }
 
-    /// Title and duration identify the card without comparing artwork objects or the moving elapsed time.
+    /// Whether the center still holds our card. Every publish writes an elapsed value and `lastPublished`
+    /// is refreshed on each one, while the center's elapsed value changes only when someone writes it, so
+    /// a foreign write differs in elapsed (or rate) even when title and duration happen to agree. A card
+    /// with no elapsed value on either side never matches, and scalars are compared rather than the
+    /// dictionaries, whose equality over artwork objects is not dependable.
     static func sameCard(_ held: [String: Any]?, _ ours: [String: Any]) -> Bool {
-        guard let held else { return false }
-        return held[MPMediaItemPropertyTitle] as? String == ours[MPMediaItemPropertyTitle] as? String
+        guard let held,
+              let heldElapsed = held[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double,
+              let ourElapsed = ours[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double
+        else { return false }
+        return heldElapsed == ourElapsed
+            && held[MPNowPlayingInfoPropertyPlaybackRate] as? Double == ours[MPNowPlayingInfoPropertyPlaybackRate] as? Double
+            && held[MPMediaItemPropertyTitle] as? String == ours[MPMediaItemPropertyTitle] as? String
             && held[MPMediaItemPropertyPlaybackDuration] as? Double == ours[MPMediaItemPropertyPlaybackDuration] as? Double
     }
 }

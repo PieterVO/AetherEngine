@@ -338,6 +338,7 @@ struct Issue255BodyReserveTests {
                 "the truncated chunk did not serve the reader's first read")
 
         let peak = reader.peakBodyReserveForTesting
+        #expect(peak > 0, "no chunk fetch reported a reservation")
         #expect(peak <= Self.reserveCeiling,
                 "a response reserved \(peak / 1024 / 1024) MB up front")
         #expect(server.bodyBytesWritten < bodyBytes / 2,

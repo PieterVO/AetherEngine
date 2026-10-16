@@ -4771,7 +4771,7 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
 
     /// #255 test hook: the largest up-front body reservation any of THIS reader's chunk fetches has
     /// asked for. Per reader, not process-wide, so a suite running in parallel cannot raise it.
-    /// Written on the delegate queue, read once the fetch it belongs to has completed.
+    /// Lock-protected; raised from each fetch's delegate.
     var peakBodyReserveForTesting: Int { peakBodyReserveLock.withLock { peakBodyReserve } }
     private let peakBodyReserveLock = NSLock()
     private var peakBodyReserve = 0

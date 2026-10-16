@@ -1972,6 +1972,9 @@ public final class AetherEngine: ObservableObject {
 
     /// Combine subscriptions mirroring softwareHost's @Published. Cancelled in stopInternal.
     var softwareCancellables: Set<AnyCancellable> = []
+    /// Now-Playing card and remote commands for the software host, which has no AVPlayer to supply them.
+    var softwareNowPlaying: SoftwareNowPlayingController?
+    var softwareNowPlayingSink: SystemNowPlayingSink?
 
     /// FFmpeg audio-only host (music). Mutually exclusive with nativeHost/softwareHost; stopInternal tears all down.
     var audioHost: AudioPlaybackHost?
@@ -7177,11 +7180,11 @@ public final class AetherEngine: ObservableObject {
     /// items are replayed at host creation.
     public func setExternalMetadata(_ items: [AVMetadataItem]) {
         pendingExternalMetadata = items
+        refreshSoftwareNowPlayingIdentity()
         nativeHost?.setExternalMetadata(items)
         audioAVPlayerHost?.setExternalMetadata(items)
     }
 
-    #if os(tvOS) || os(iOS)
     /// Opt in to owning the system Now-Playing session on the native VIDEO path.
     ///
     /// Off by default, and that default is load-bearing. The native path is consumed both by hosts
@@ -7195,16 +7198,23 @@ public final class AetherEngine: ObservableObject {
     /// Read when a native host is created, so set it before `load()`. A host preserved across a
     /// native->native reload (issue #15) keeps whatever it was created with; the change takes effect
     /// on the next fresh host.
+    ///
+    /// The software host (the Dolby Vision FEL route) has no AVPlayer for AVKit to own, so the same opt-in
+    /// makes the engine publish its card and serve the system's transport commands itself, on every
+    /// platform; see `SoftwareNowPlayingController`. Read when the software host is built.
     public var ownsVideoNowPlayingSession: Bool = false
 
-    /// MPNowPlayingSession for the native VIDEO path; nil unless `ownsVideoNowPlayingSession` was set
-    /// before the session loaded (also nil on the software path and with no host). Same contract as
-    /// `audioNowPlayingSession`: the host app registers transport commands on `remoteCommandCenter`
-    /// and stages identity metadata via `setVideoNowPlayingInfo`; the session auto-publishes
-    /// elapsed/rate/duration from the AVPlayer and survives native->native reloads with the host
-    /// (issue #15), so system Now-Playing ownership holds across a background pause.
+    #if os(tvOS) || os(iOS)
+    /// MPNowPlayingSession for the VIDEO path; nil unless `ownsVideoNowPlayingSession` was set before the
+    /// session loaded (also nil with no host). Same contract as `audioNowPlayingSession`: identity metadata
+    /// arrives via `setVideoNowPlayingInfo`. On the native path the host app registers transport commands
+    /// on `remoteCommandCenter`, the session auto-publishes elapsed/rate/duration from the AVPlayer and
+    /// survives native->native reloads with the host (issue #15), so system Now-Playing ownership holds
+    /// across a background pause. On the software path the session is player-less: the engine already
+    /// serves play, pause, toggle, skip and change-position and publishes elapsed/rate itself, so the host
+    /// registers only what it owns (next/previous).
     public var videoNowPlayingSession: MPNowPlayingSession? {
-        nativeHost?.nowPlayingSession
+        nativeHost?.nowPlayingSession ?? softwareNowPlayingSink?.nowPlayingSession
     }
 
     /// Staged per-item Now-Playing dictionary for the native video path. Replayed at host creation
@@ -7219,6 +7229,7 @@ public final class AetherEngine: ObservableObject {
     /// still staged, so a host that opts in on a later load keeps what it set.
     public func setVideoNowPlayingInfo(_ info: [String: Any]) {
         pendingVideoNowPlayingInfo = info
+        refreshSoftwareNowPlayingIdentity()
         nativeHost?.setNowPlayingInfo(info)
     }
     #endif
@@ -7305,6 +7316,7 @@ public final class AetherEngine: ObservableObject {
         }
         // Zero is a pause, not a speed: it must not become what a later resume comes back at (#436).
         if clamped != 0 { desiredRate = clamped }
+        defer { refreshSoftwareNowPlaying() }
         // #730: while paused a speed is a speed, not a play press. Handing it to the host would play
         // (`avPlayer.rate = x`) behind a state that still says paused; seeding the resume rate is what
         // the next play() reads on every host.
@@ -7715,6 +7727,7 @@ public final class AetherEngine: ObservableObject {
         }
 
         softwareCancellables.removeAll()
+        stopSoftwareNowPlaying()
         // #353: the picture belongs to the session. Left standing, the next source would be laid out
         // against this one's rectangle for as long as it takes its own first frame to arrive.
         softwareDisplaySize = nil

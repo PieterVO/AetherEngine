@@ -12,6 +12,18 @@ the public-API contract.
 
 _Nothing yet._
 
+## [7.38.1] - 2026-10-16
+
+### Fixed
+
+- **The package compiles in Release with Xcode 26 again.** `FelResidualMeasure` (the
+  `AETHER_FEL_MEASURE` diagnostic from 7.37.0) formatted its luma-band line inside the closure it
+  hands its queue, as one `+` chain of three `map`/`joined` expressions, and Xcode 26.3's type checker
+  gave up on that closure ("unable to type-check this expression in reasonable time", x86_64 Release
+  archive), so a host archiving a universal macOS app on Xcode 26 could not build 7.37.0 or 7.38.0.
+  Xcode 27 checked it in time, which is what this repository's CI runs. The closure now calls a
+  function, and the three parts are bound to typed constants first. No behaviour change.
+
 ## [7.38.0] - 2026-10-16
 
 ### Changed

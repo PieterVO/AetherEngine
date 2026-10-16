@@ -1239,13 +1239,15 @@ final class SoftwarePlaybackHost {
         renderer.setTimeline(audioOutput.timeline)   // AE#395
         self.audioOutput?.volume = volume
         self.audioOutput?.setPresentationOffset(seconds: audioDelaySeconds)   // AE#464
-        // The FEL path holds the clock until composed frames are queued, then starts it a little ahead
-        // (`AudioOutput.videoPrerollSatisfied`); every other route answers nil and starts at once, and
-        // so does a session playing audio only in the background, which feeds the renderer nothing.
+        // The clock waits until frames from its position on are queued, then starts a little ahead
+        // (`AudioOutput.videoPrerollSatisfied`, #774, #800). A live stream off the FEL path starts at
+        // once, and so does a session playing audio only in the background, which feeds the renderer
+        // nothing.
         let prerollRenderer = renderer
+        let prerollLive = isLive
         self.audioOutput?.videoPrerollSatisfied = { [weak self] clock in
             guard self?.backgroundAudioOnly != true else { return nil }
-            return prerollRenderer.felPrerollSatisfied(clock: clock)
+            return prerollRenderer.prerollSatisfied(clock: clock, live: prerollLive)
         }
         // AE#395: the route this session plays into, the counterpart of the native host's line. Without
         // it a silent software session on a long-latency route and an audible one on HDMI log the same.

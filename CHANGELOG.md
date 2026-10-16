@@ -34,6 +34,20 @@ the public-API contract.
 
 ### Fixed
 
+- **A software start or seek no longer runs the clock while the decoder works up to the target
+  (#800).** The software host started its clock the moment the first packet went in (video-only) or
+  the first audio decoded, while the video decoder was still working from the keyframe before the
+  target up to it, so the first frames reached the layer late and were dropped: a 4K HEVC title
+  with no audio and 10 s GOPs ran its clock 0.9 s ahead of the first frame after a switch onto the
+  software path and dropped 5 to 7 frames on an Apple TV 4K, a 1080p H.264 title with audio 0.3 s
+  and 3. Before 7.32.2 the #724 re-anchor hid this by starting the clock a whole GOP behind. The
+  video preroll #774 added for the Profile 7 FEL route now holds every VOD software route: the
+  clock waits at rate 0 until frames from its position on are in the layer
+  (`SampleBufferRenderer.videoPrerollSeconds`, 0.125 s) and then starts `prerollStartLead` from
+  now. A live stream off the FEL route still starts at once. Measured with `aetherctl play --sw` on
+  a 4K 10 s GOP fixture: `preroll ready after 889 ms; starting at t=36.600`, where the clock used to
+  start at once. Reported with measurements by @cmcpherson274. `VideoPrerollTests`.
+
 - **A live reconnect whose audio returns first no longer publishes a picture twice.** When the
   returning connection's audio opened the replay check before the outgoing connection's last pictures
   left the PES parser (a flagged picture and its unflagged, truncated successor), those pictures were

@@ -121,8 +121,8 @@ struct DoviComposeAsyncTests {
     func blockingComposeTakesAnInFlightSlot() throws {
         final class Box: @unchecked Sendable { let done = DispatchSemaphore(value: 0); var result: Bool? }
         let composer = try #require(DoviFelComposer())
-        let bl = try #require(Self.makeBuffer(width: 256, height: 256, fill: 0x8000))
-        let el = try #require(Self.makeBuffer(width: 128, height: 128, fill: 0x4000))
+        nonisolated(unsafe) let bl = try #require(Self.makeBuffer(width: 256, height: 256, fill: 0x8000))
+        nonisolated(unsafe) let el = try #require(Self.makeBuffer(width: 128, height: 128, fill: 0x4000))
         let params = Self.identityParams(blW: 256, blH: 256, elW: 128, elH: 128)
         for _ in 0..<DoviFelComposer.maxFramesInFlight { composer.acquireSlot() }
 

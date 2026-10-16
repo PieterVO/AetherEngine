@@ -5109,7 +5109,7 @@ public final class AetherEngine: ObservableObject {
                canHardwareDecode: nil) {
             let vIdx = probe.videoStreamIndex
             await BlockingWork.detached(priority: .userInitiated) { [probe] in
-                VideoConfigRecord.completeHEVCRecordFromInBandParameterSets(demuxer: probe, streamIndex: vIdx)
+                _ = VideoConfigRecord.completeHEVCRecordFromInBandParameterSets(demuxer: probe, streamIndex: vIdx)
             }.value
             if loadGeneration != gen {
                 probe.markClosed()

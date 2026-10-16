@@ -10,7 +10,9 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **The software host follows the system caption style.** Subtitles composited into software-path PiP frames now use the user's Settings > Accessibility > Subtitles & Captioning choices (font, size, text colour and opacity, background and window colour and opacity, edge style) the way AVPlayer's legible output does, and re-render when the setting changes. A field the user has not overridden keeps the cue's own styling or the default look, so nothing changes without a preference. `SubtitleCaptionStyle.current()` and `observeChanges(_:)` expose the same style to a host that draws its own overlay. Bitmap subtitles are untouched.
 
 ## [7.38.1] - 2026-10-16
 

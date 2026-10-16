@@ -205,6 +205,38 @@ struct LiveStreamRefusalRetryTests {
         #expect(origin.requestCount == 1)
     }
 
+    @Test("a live open answered with a server error is asked once more and plays when served")
+    func serverErrorAtOpenIsAskedOnceMore() throws {
+        AetherEngine.reconnectBackoffScaleForTesting = 0.02
+        defer { AetherEngine.reconnectBackoffScaleForTesting = 1.0 }
+        let body = Self.streamBytes(count: 400)
+        let origin = try #require(ScriptedOrigin { index in
+            index == 0 ? .init(status: 502) : .init(status: 200, body: body)
+        })
+        defer { origin.stop() }
+        let reader = Self.makeLiveReader(origin.url)
+        defer { reader.markClosed(); reader.close() }
+        try reader.open()
+
+        let drained = Self.drain(reader, expectedBytes: body.count)
+        #expect(drained.failure == nil)
+        #expect(drained.bytes >= body.count)
+    }
+
+    @Test("a live open answered with a server error twice fails typed with its status")
+    func serverErrorTwiceAtOpenFailsTyped() throws {
+        AetherEngine.reconnectBackoffScaleForTesting = 0.02
+        defer { AetherEngine.reconnectBackoffScaleForTesting = 1.0 }
+        let origin = try #require(ScriptedOrigin { _ in .init(status: 500) })
+        defer { origin.stop() }
+        let reader = Self.makeLiveReader(origin.url)
+        defer { reader.markClosed(); reader.close() }
+
+        let failure = #expect(throws: AVIOReaderError.self) { try reader.open() }
+        #expect(failure == .httpStatus(500))
+        #expect(origin.requestCount == 2)
+    }
+
     @Test("a live open answered 403 fails typed too")
     func forbiddenOpenFailsTyped() throws {
         let origin = try #require(ScriptedOrigin { _ in .init(status: 403) })

@@ -775,6 +775,7 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
     /// How long a live stream keeps asking before the refusal is the session's answer.
     static let liveRefusalRetryBudget: TimeInterval = 60
     /// Test seam: a shorter budget, so the give-up is exercised without a minute of wall clock.
+    /// Read once per reader, at init.
     nonisolated(unsafe) static var liveRefusalRetryBudgetForTesting: TimeInterval?
 
     /// The wait before a live stream's refused request is made again: a second, or the origin's
@@ -1141,6 +1142,8 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
     /// #392: the idle gap this reader takes a first refusal at face value after. Shipped value
     /// unless a test shortens it, captured once at init like the two hooks above.
     private let pinIdleSeconds: TimeInterval
+    /// How long a live refusal streak is ridden out, captured once at init like the hooks above.
+    private let liveRefusalRetryBudgetSeconds: TimeInterval
     /// Stall threshold this reader runs with, `connStallTimeoutDefault` unless a caller overrides it.
     /// One value for both detectors, because they are one policy: a connection that has delivered
     /// nothing for this long is replaced, whether or not a read is waiting on it (#309).
@@ -1200,6 +1203,7 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
         self.throttleKbps = AetherEngine.sourceThrottleKbpsForTesting
         self.backoffScale = AetherEngine.reconnectBackoffScaleForTesting
         self.pinIdleSeconds = AetherEngine.pinIdleSecondsForTesting ?? Self.pinIdleRepinSecondsDefault
+        self.liveRefusalRetryBudgetSeconds = Self.liveRefusalRetryBudgetForTesting ?? Self.liveRefusalRetryBudget
         self.connStallTimeout = max(0.05, connStallTimeout)
         self.winHighWater = max(1, windowHighWater
             ?? (isLive ? Self.liveWinHighWaterDefault : Self.winHighWaterDefault))
@@ -1326,6 +1330,19 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
                 // way the live HLS ingest reports a refused join: the host retries a 509 on its own
                 // cadence with the right words for it, where the read loop's ladder would have spent
                 // the open budget on the same request and handed back an untyped read failure.
+                // A server error is asked once more first, as the read loop did before this was typed:
+                // a 500/502 while a tuner or transcode spins up is the moment's, not the channel's.
+                if !opened, isLive, let refusal = refusalOfLiveOpenConnection(),
+                   Self.isResolvedHardServerError(refusal) {
+                    EngineLog.emit(
+                        "[AVIOReader] \(label) live open answered status=\(refusal); asking once more",
+                        category: .demux)
+                    backoffBeforeReconnect(streak: 1, retryAfter: 0)
+                    try probeControl?.check()
+                    guard !isClosed else { throw CancellationError() }
+                    startPersistentConnection(at: 0, boundedTo: boundedInitialFetch)
+                    opened = awaitFirstPersistentData()
+                }
                 if !opened, isLive, let refusal = refusalOfLiveOpenConnection() {
                     EngineLog.emit(
                         "[AVIOReader] \(label) live open refused status=\(refusal); failing the open typed",
@@ -2875,7 +2892,7 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
             let now = DispatchTime.now()
             let started = rateLimitStreakStartedAt ?? now
             rateLimitStreakStartedAt = started
-            let budget = Self.liveRefusalRetryBudgetForTesting ?? Self.liveRefusalRetryBudget
+            let budget = liveRefusalRetryBudgetSeconds
             let elapsed = Double(now.uptimeNanoseconds &- started.uptimeNanoseconds) / 1_000_000_000
             return elapsed > budget
         }

@@ -10,6 +10,19 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Changed
+
+- **A live stream on the software path starts near the newest media.** A continuous live stream over
+  HTTP opens with a burst of what the origin holds of the channel (8 to 18 s on one IPTV panel, at
+  link speed), and the software host armed its clock on that burst's first packet. Nothing on the
+  software path catches up, so the picture then ran the whole burst behind the broadcast for as long
+  as the channel played: measured 17 s behind on a channel whose native-path session ran 6 s behind.
+  The live feeder now waits for the burst to land (the ring growing no faster than real time over a
+  quarter second, from 0.3 s on, or 1.5 s at most) and starts 4 s behind the newest media, on a
+  keyframe; a source that delivers in real time, or a ring too shallow to be worth a later keyframe,
+  still starts from its first packet. The media behind the start stays in the rewind ring.
+  `SoftwareLiveJoinPolicy`, `SoftwareLiveJoinPlacementTests`.
+
 ### Fixed
 
 - **Profile 7 FEL chroma residual is sampled where the base chroma sits.** With a quarter-resolution

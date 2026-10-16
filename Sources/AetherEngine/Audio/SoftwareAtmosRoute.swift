@@ -1,8 +1,8 @@
 import Foundation
 import AetherLibavcodec
 
-/// How the software host (the route Dolby Vision Profile 7 FEL takes, and AV1 or VP9 where there is no
-/// hardware decoder) hands a track's audio to its renderer.
+/// How the software host (the route Dolby Vision Profile 7 FEL takes, and the one for video the hardware
+/// decoder cannot play) hands a track's audio to its renderer.
 ///
 /// It decodes to PCM, which is where Atmos was lost: a JOC stream decoded by libavcodec is its 5.1
 /// core, and TrueHD Atmos or DTS:X decoded the same way is its 7.1 bed. The two Atmos routes of the

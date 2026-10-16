@@ -1995,6 +1995,7 @@ extension AetherEngine {
         host.dolbyVisionHandling = loadedOptions.dolbyVisionHandling
         host.preferDualLayerDolbyVision = loadedOptions.preferDualLayerDolbyVision
         host.elType = elType ?? sourceElType
+        host.objectAudioRendering = loadedOptions.objectAudioRendering
         host.setAudioDelay(loadedOptions.audioDelaySeconds)   // AE#464: before the decoder opens
         host.deinterlaceConfig = DeinterlaceConfig(
             mode: loadedOptions.deinterlaceMode,

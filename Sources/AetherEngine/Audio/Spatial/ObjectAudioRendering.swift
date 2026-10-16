@@ -12,6 +12,12 @@ import Foundation
 /// Applies to TrueHD sources FFmpeg identifies as Atmos (profile 30) and to DTS-HD Master Audio that
 /// LibDTSX confirms as DTS:X on its first frames, at 48 kHz, and only on OS 26 and later, where the
 /// APAC encoder API exists. Everything else keeps `audioBridgeMode`.
+///
+/// The software playback host (the route Dolby Vision Profile 7 FEL, AV1 and VP9 without a hardware
+/// decoder take) honours the same setting on VOD sessions. It renders TrueHD Atmos and DTS:X as APAC
+/// for the sample-buffer audio renderer, and it hands an E-AC-3 JOC track to that renderer
+/// compressed, so the system's Atmos decoder gets the objects; without the setting, or for live
+/// sessions, it decodes every track to PCM as before.
 public enum ObjectAudioRendering: Equatable, Sendable {
     case off
     /// Render into `layout`, which should match the speakers the receiver actually drives.

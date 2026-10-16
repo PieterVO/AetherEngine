@@ -1,4 +1,5 @@
 import Foundation
+import CoreMedia
 import AetherLibavcodec
 import AetherLibavutil
 
@@ -42,6 +43,10 @@ final class SpatialAudioBridge: AudioTranscodingBridge, @unchecked Sendable {
     let hlsCodecs: String
     var servedChannelCount: Int? { layout.channelCount }
     let peakOutputBitRate: Int64
+    /// The encoder's packets as a sample-buffer format description, and the frames the encoder
+    /// primes with, for a host that feeds an audio renderer instead of a muxer (see `wrap`).
+    let packetFormatDescription: CMAudioFormatDescription
+    let encoderLeadingFrames: Int
 
     private let srcTimeBase: AVRational
     private let decoder: ObjectAudioDecoding
@@ -121,6 +126,8 @@ final class SpatialAudioBridge: AudioTranscodingBridge, @unchecked Sendable {
         let pipeline = APACEncodePipeline(
             encoder: encoder, channels: layout.channelCount, bufferFrames: Self.encodeChunkFrames * 4)
         self.pipeline = pipeline
+        packetFormatDescription = encoder.formatDescription
+        encoderLeadingFrames = encoder.leadingFrames
         output = pipeline.takeInitialBuffer()
         soundSampleEntryOverride = APACSampleEntry.sampleEntry(
             magicCookie: encoder.magicCookie, sampleRate: Self.sampleRate)

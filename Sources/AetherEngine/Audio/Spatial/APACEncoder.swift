@@ -58,6 +58,10 @@ final class APACEncoder {
     /// Frames of encoder delay at the head of the stream (and again after every `reset`).
     let leadingFrames: Int
     /// The packets' format as a sample-buffer format description, for a renderer fed the packets directly.
+    /// It carries the `dapa` cookie and 1024 frames per packet: the encoder's own output format has
+    /// neither, and a renderer given that cannot configure its decoder. It then fails every packet
+    /// inside, while its status stays `rendering` and its error stays nil, so the output is silent
+    /// and nothing says so.
     let formatDescription: CMAudioFormatDescription
 
     private let pcmFormat: AVAudioFormat
@@ -97,11 +101,35 @@ final class APACEncoder {
         guard let cookie = conv.magicCookie, !cookie.isEmpty else { throw EncoderError.converterUnavailable(layout) }
         magicCookie = cookie
         leadingFrames = Int(conv.primeInfo.leadingFrames)
-        formatDescription = apac.formatDescription
+        guard let described = Self.cookiedFormatDescription(
+            apac: apac, cookie: cookie, layoutTag: layout.channelLayoutTag) else {
+            throw EncoderError.converterUnavailable(layout)
+        }
+        formatDescription = described
         precondition(maxInputFrames > 0, "APACEncoder needs room for at least one input frame")
         inputBuffer = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(maxInputFrames))!
         outputBuffer = AVAudioCompressedBuffer(
             format: apac, packetCapacity: 16, maximumPacketSize: max(conv.maximumOutputPacketSize, 1))
+    }
+
+    /// The APAC format description with a magic cookie and a packet size, which is what a decoder
+    /// needs to start. Pure, so the tests can build it without playing anything.
+    static func cookiedFormatDescription(
+        apac: AVAudioFormat, cookie: Data, layoutTag: AudioChannelLayoutTag
+    ) -> CMAudioFormatDescription? {
+        var asbd = apac.streamDescription.pointee
+        if asbd.mFramesPerPacket == 0 { asbd.mFramesPerPacket = UInt32(framesPerPacket) }
+        var layout = AudioChannelLayout()
+        layout.mChannelLayoutTag = layoutTag
+        var description: CMAudioFormatDescription?
+        let status = cookie.withUnsafeBytes { bytes in
+            CMAudioFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault, asbd: &asbd,
+                layoutSize: MemoryLayout<AudioChannelLayout>.size, layout: &layout,
+                magicCookieSize: bytes.count, magicCookie: bytes.baseAddress,
+                extensions: nil, formatDescriptionOut: &description)
+        }
+        return status == noErr ? description : nil
     }
 
     /// Queue `frameCount` frames (one plane per layout channel) and return every packet the encoder

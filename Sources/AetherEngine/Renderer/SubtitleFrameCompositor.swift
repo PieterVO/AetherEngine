@@ -360,31 +360,26 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
             let textX = originX + pad
             let baseline = cursorY + pad / 2 - entry.bounds.minY
             let edge = style.edgeStyle?.value
+            ctx.saveGState()
             if edge == .uniform {
-                // The outline is its own pass underneath: stroking and filling in one pass lays the
-                // stroke's inner half over the glyph. At twice the line width only the outer half
-                // shows once the fill goes over it.
+                // The outline is its own pass underneath the text, in a transparency layer: the fill
+                // is copied over the stroke inside the layer, so the glyph shows the text colour alone
+                // (a translucent colour does not pick up the stroke's inner half) and the layer
+                // composites onto the line background and window as one unit, leaving both intact.
+                ctx.beginTransparencyLayer(auxiliaryInfo: nil)
                 ctx.saveGState()
                 applyEdge(edge, in: ctx, fontSize: layout.fontSize)
                 ctx.textPosition = CGPoint(x: textX, y: baseline)
                 CTLineDraw(entry.line, ctx)
                 ctx.restoreGState()
+                ctx.setBlendMode(.copy)
+            } else {
+                applyEdge(edge, in: ctx, fontSize: layout.fontSize)
             }
-            if edge == .uniform {
-                // Knock the glyph area out of the outline first: a translucent text colour would
-                // otherwise sit over the stroke's inner half instead of over the picture.
-                ctx.saveGState()
-                ctx.setBlendMode(.clear)
-                ctx.setTextDrawingMode(.fill)
-                ctx.textPosition = CGPoint(x: textX, y: baseline)
-                CTLineDraw(entry.line, ctx)
-                ctx.restoreGState()
-            }
-            ctx.saveGState()
-            if edge != .uniform { applyEdge(edge, in: ctx, fontSize: layout.fontSize) }
             ctx.setTextDrawingMode(.fill)
             ctx.textPosition = CGPoint(x: textX, y: baseline)
             CTLineDraw(entry.line, ctx)
+            if edge == .uniform { ctx.endTransparencyLayer() }
             ctx.restoreGState()
             drawStrikethrough(entry.runs, on: entry.line, in: ctx, at: CGPoint(x: textX, y: baseline),
                               layout: layout, style: style)
@@ -394,8 +389,9 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
     }
 
     /// Edge treatment for the glyphs about to be drawn, as the system's five styles: an outline for
-    /// uniform (a stroke-only setup, drawn as a pass of its own before the fill), a soft offset shadow, and hard one-sided shadows for raised and depressed. The
-    /// context's y axis points up, so raised puts the shadow below the glyph.
+    /// uniform (a stroke-only setup, drawn as a pass of its own before the fill), a soft offset
+    /// shadow, and hard one-sided shadows for raised and depressed. The context's y axis points up,
+    /// so raised puts the shadow below the glyph.
     nonisolated static func applyEdge(_ edge: SubtitleCaptionStyle.EdgeStyle?, in ctx: CGContext,
                                       fontSize: CGFloat) {
         let black = CGColor(red: 0, green: 0, blue: 0, alpha: 1)

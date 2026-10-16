@@ -204,19 +204,52 @@ struct SubtitleCaptionStyleTests {
         #expect(outlined.white == bare.white)
     }
 
-    @Test("a translucent text colour is not laid over the outline")
-    func translucentTextOverOutline() throws {
+    @Test("a translucent text colour is not laid over the outline, with or without a line background",
+          arguments: [0.0, 0.6])
+    func translucentTextOverOutline(backgroundOpacity: Double) throws {
         func render(_ edge: SubtitleCaptionStyle.Choice<SubtitleCaptionStyle.EdgeStyle>?) throws -> [UInt32: Int] {
             histogram(try #require(SubtitleFrameCompositor.renderOverlay(
                 for: [cue], frameWidth: 640, frameHeight: 360,
-                style: SubtitleCaptionStyle(textOpacity: .init(0.5), backgroundOpacity: .init(0), edgeStyle: edge))))
+                style: SubtitleCaptionStyle(textOpacity: .init(0.5),
+                                            backgroundOpacity: .init(backgroundOpacity), edgeStyle: edge))))
         }
         let bare = try render(nil)
         let outlined = try render(.init(.uniform))
-        // The glyph interior is the most common pixel value of the bare text.
-        let interior = try #require(bare.max { $0.value < $1.value }?.key)
+        // The glyph interior is the translucent text over whatever is behind it: the most common
+        // pixel value that is not the line background itself.
+        let backgroundValue: UInt32 = backgroundOpacity > 0 ? 0x99000000 : 0
+        let interior = try #require(bare.filter { $0.key != backgroundValue }.max { $0.value < $1.value }?.key)
         #expect(bare[interior]! > 100)
         #expect(outlined[interior] == bare[interior])
+        // The line background survives under the outline's layer.
+        #expect(outlined[backgroundValue, default: 0] >= bare[backgroundValue, default: 0] - 2000)
+    }
+
+    @Test("opaque text keeps solid glyph edges inside its outline")
+    func opaqueEdgesStaySolid() throws {
+        func alphas(_ style: SubtitleCaptionStyle) throws -> [UInt8] {
+            let image = try #require(SubtitleFrameCompositor.renderOverlay(
+                for: [cue], frameWidth: 640, frameHeight: 360, style: style))
+            let ctx = try #require(CGContext(
+                data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let bytes = ctx.data!.assumingMemoryBound(to: UInt8.self)
+            return (0..<(image.width * image.height)).map { bytes[$0 * 4 + 3] }
+        }
+        let bare = try alphas(SubtitleCaptionStyle(backgroundOpacity: .init(0)))
+        let outlined = try alphas(SubtitleCaptionStyle(backgroundOpacity: .init(0), edgeStyle: .init(.uniform)))
+        // Every pixel the bare glyph only partly covers sits inside the outline, so it is solid ink.
+        // The few hairline pixels (glyph coverage in the single digits) lie on the outline's own
+        // antialiased outer boundary and may be a little under, so those are held to a lower bar.
+        // The knock-out this replaced left 65% of these edge pixels below 230.
+        let edges = bare.indices.filter { bare[$0] > 0 && bare[$0] < 255 }
+        #expect(edges.count > 100)
+        let thin = edges.filter { outlined[$0] < 250 }
+        #expect(thin.count * 20 <= edges.count, "\(thin.count) of \(edges.count) edge pixels below alpha 250")
+        let weak = edges.filter { bare[$0] >= 64 && outlined[$0] < 240 }
+        #expect(weak.isEmpty, "\(weak.count) edge pixels of real coverage below alpha 240")
     }
 
     @Test("the default style renders the same overlay as before styles existed")
@@ -315,16 +348,25 @@ struct SubtitleCaptionStyleTests {
         }
         // The seeded style differs from the live one, so an open observation always has news to deliver.
         let seed = SubtitleCaptionStyle(backgroundOpacity: .init(0.123))
+
+        // Control, on an observation of its own: an open one delivers.
+        let control = Box()
+        let open = SubtitleCaptionStyle.observeChanges(startingFrom: seed, fireSink: { control.store($0) }) { _ in
+            control.bump()
+        }
+        control.deliver()
+        #expect(control.count == 1)
+        withExtendedLifetime(open) {}
+
+        // The observation under test never delivers before release, so the delivery after it is its
+        // first and nothing but the gate can stop it (dedup has nothing to drop). Releasing the token
+        // removes the observers, but a delivery already under way holds the closure.
         let box = Box()
         var observation: SubtitleCaptionStyle.Observation? = SubtitleCaptionStyle.observeChanges(
             startingFrom: seed, fireSink: { box.store($0) }) { _ in box.bump() }
-        box.deliver()
-        #expect(box.count == 1, "control: an open observation delivers")
-        // Releasing the token removes the observers, but a delivery that was already under way holds
-        // the closure; only the gate stops it.
         observation = nil
         box.deliver()
-        #expect(box.count == 1)
+        #expect(box.count == 0)
         _ = observation
     }
 }

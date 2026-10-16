@@ -117,6 +117,14 @@ final class FrameDecodeContext: @unchecked Sendable {
     /// How far inside the end a clamped past-EOF request lands, to reach a safely-decodable frame.
     static let clampBackoffSeconds: Double = 1.0
 
+    /// The origin the container's duration is measured from: `AVFormatContext.start_time` (in
+    /// AV_TIME_BASE units) when the container has one, else the video stream's own start. They differ
+    /// when another stream begins earlier than the video, and the span runs from the earlier one.
+    static func clampOrigin(formatStartTime: Int64, videoStartSeconds: Double?) -> Double {
+        if formatStartTime != Int64.min { return Double(formatStartTime) / Double(AV_TIME_BASE) }
+        return videoStartSeconds ?? 0
+    }
+
     /// Clamp a still-extraction seek target to the demuxer's known duration. Seeking far past EOF
     /// lands on a garbage/empty frame that decodes "successfully" but is blank (AE#105: a mis-selected
     /// decoy Blu-ray title whose demuxer knew only 76s while the scrub asked for 611s). Returns the
@@ -126,14 +134,6 @@ final class FrameDecodeContext: @unchecked Sendable {
     /// `duration` is the container's span, measured from the container's own start time, and
     /// `requested` is on the source axis. `start` is that container origin (see `clampOrigin`), so
     /// the end is `start + duration`.
-    /// The origin the container's duration is measured from: `AVFormatContext.start_time` (in
-    /// AV_TIME_BASE units) when the container has one, else the video stream's own start. They differ
-    /// when another stream begins earlier than the video, and the span runs from the earlier one.
-    static func clampOrigin(formatStartTime: Int64, videoStartSeconds: Double?) -> Double {
-        if formatStartTime != Int64.min { return Double(formatStartTime) / Double(AV_TIME_BASE) }
-        return videoStartSeconds ?? 0
-    }
-
     static func clampSeekSeconds(requested: Double, duration: Double, start: Double = 0) -> Double {
         let origin = start.isFinite ? max(0, start) : 0
         guard duration > 0, requested > origin + duration + pastDurationTolerance else { return requested }

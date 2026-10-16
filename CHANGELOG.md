@@ -23,6 +23,15 @@ the public-API contract.
   still starts from its first packet. The media behind the start stays in the rewind ring.
   `SoftwareLiveJoinPolicy`, `SoftwareLiveJoinPlacementTests`.
 
+- **LibDTSX 2.0.0: `DTSX.framework` is a dynamic framework the app embeds, under the LGPL.** The
+  `dca` crate it compiles in is labelled Apache-2.0 but is a port of FFmpeg's LGPL-2.1-or-later
+  `dca` decoder, so the built library is LGPL-3.0-or-later and now ships, like the FFmpeg
+  frameworks, as a replaceable framework in `YourApp.app/Frameworks/`, exporting only the C API.
+  Same decoder, bit-identical output. A host with the `DTSXObjectAudio` trait on ships LibDTSX's
+  `NOTICE` and `LICENSES/` with the app (#798, thanks @tweakapps and @cmcpherson274).
+- **LibTrueHD 2.3.1:** `truehd_atmos_version_string()` names the `truehd` commit actually built in;
+  it still named an older one. Same decoder (LibTrueHD#2, thanks @cmcpherson274).
+
 ### Fixed
 
 - **A live reconnect whose audio returns first no longer publishes a picture twice.** When the

@@ -10,7 +10,9 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- The software playback host (Dolby Vision FEL, AV1, VP9) keeps Atmos. E-AC-3 JOC is handed to the audio renderer compressed, with the decoder primed once per process, and TrueHD Atmos and DTS:X are rendered to APAC under the existing `objectAudioRendering` option. Other audio, live streams and `.off` still decode to PCM. `aetherctl play` gains `--atmos-bed <layout>`.
 
 ## [7.38.1] - 2026-10-16
 

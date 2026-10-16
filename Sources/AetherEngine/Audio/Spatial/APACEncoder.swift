@@ -1,4 +1,5 @@
 import AVFAudio
+import CoreMedia
 import AudioToolbox
 import Foundation
 
@@ -56,6 +57,8 @@ final class APACEncoder {
     let magicCookie: Data
     /// Frames of encoder delay at the head of the stream (and again after every `reset`).
     let leadingFrames: Int
+    /// The packets' format as a sample-buffer format description, for a renderer fed the packets directly.
+    let formatDescription: CMAudioFormatDescription
 
     private let pcmFormat: AVAudioFormat
     private let converter: AVAudioConverter
@@ -94,6 +97,7 @@ final class APACEncoder {
         guard let cookie = conv.magicCookie, !cookie.isEmpty else { throw EncoderError.converterUnavailable(layout) }
         magicCookie = cookie
         leadingFrames = Int(conv.primeInfo.leadingFrames)
+        formatDescription = apac.formatDescription
         precondition(maxInputFrames > 0, "APACEncoder needs room for at least one input frame")
         inputBuffer = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(maxInputFrames))!
         outputBuffer = AVAudioCompressedBuffer(

@@ -71,13 +71,25 @@ extension SoftwarePlaybackHost {
         case .apac(let layout):
             guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *) else { return try pcm() }
             let producer = await makeAPACProducer(demuxer: dem, stream: stream, streamIndex: streamIndex, layout: layout)
-            if let producer, stopRequested || Task.isCancelled {
-                producer.close()
-                throw CancellationError()
+            if let settled = try Self.settleAPACProducer(producer, stopped: stopRequested || Task.isCancelled) {
+                return (settled, route)
             }
-            if let producer { return (producer, route) }
             return try pcm()
         }
+    }
+
+    /// What the APAC route does with `makeAPACProducer`'s answer. A stop() that landed during the
+    /// verdict await makes the answer nil on purpose, and the PCM decode the caller falls back to on
+    /// a nil would open a stream the closing demuxer has freed: so a stop is checked before either,
+    /// and a producer that was built is closed. nil (no stop) is the plain "use the PCM decode".
+    nonisolated static func settleAPACProducer(
+        _ producer: (any SoftwareAudioProducing)?, stopped: Bool
+    ) throws -> (any SoftwareAudioProducing)? {
+        if stopped {
+            producer?.close()
+            throw CancellationError()
+        }
+        return producer
     }
 
     /// The format entry of the stream's E-AC-3 packets, looked at without consuming them. The box is

@@ -6,7 +6,7 @@ import AetherLibavcodec
 import AetherLibavutil
 @testable import AetherEngine
 
-/// The software host (Dolby Vision FEL, AV1 and VP9 without a hardware decoder) decodes audio to PCM,
+/// The software host (Dolby Vision FEL, and video the hardware decoder cannot play) decodes audio to PCM,
 /// which loses Atmos. These pin which tracks leave that route, and the pieces of the compressed
 /// E-AC-3 route that the renderer is picky about.
 @Suite("Software host Atmos routes")
@@ -207,6 +207,35 @@ struct SoftwareAtmosRouteTests {
             #expect(made.route == .pcm)
             #expect(made.producer is AudioDecoder)
         }
+    }
+
+    @Test("a stop during the APAC verdict throws before the PCM fallback can open the stream")
+    func stopSettlesBeforeThePCMFallback() throws {
+        // The verdict await returns nil on a stop, on purpose; the nil must not read as "use PCM".
+        #expect(throws: CancellationError.self) {
+            _ = try SoftwarePlaybackHost.settleAPACProducer(nil, stopped: true)
+        }
+        // A producer built before the stop is closed, not leaked.
+        let built = ClosingProducer()
+        #expect(throws: CancellationError.self) {
+            _ = try SoftwarePlaybackHost.settleAPACProducer(built, stopped: true)
+        }
+        #expect(built.closeCount == 1)
+        // No stop: a producer is kept open, and nil still means the PCM decode.
+        let kept = ClosingProducer()
+        let settled = try SoftwarePlaybackHost.settleAPACProducer(kept, stopped: false)
+        #expect(settled === kept)
+        #expect(kept.closeCount == 0)
+        #expect(try SoftwarePlaybackHost.settleAPACProducer(nil, stopped: false) == nil)
+    }
+
+    private final class ClosingProducer: SoftwareAudioProducing, @unchecked Sendable {
+        private let lock = NSLock()
+        private var closes = 0
+        var closeCount: Int { lock.lock(); defer { lock.unlock() }; return closes }
+        func decode(packet: UnsafeMutablePointer<AVPacket>) -> [CMSampleBuffer] { [] }
+        func flush() {}
+        func close() { lock.lock(); closes += 1; lock.unlock() }
     }
 
     @Test("the look at a closed demuxer finds no audio packet and touches no stream")

@@ -55,7 +55,7 @@ struct DoviFelFuzzTests {
         let pad = Int(AV_INPUT_BUFFER_PADDING_SIZE)
         let ref = av_buffer_alloc(bytes.count + pad)!
         memset(ref.pointee.data, 0, bytes.count + pad)
-        bytes.withUnsafeBufferPointer { memcpy(ref.pointee.data, $0.baseAddress!, bytes.count) }
+        _ = bytes.withUnsafeBufferPointer { memcpy(ref.pointee.data, $0.baseAddress!, bytes.count) }
         pkt.pointee.buf = ref
         pkt.pointee.data = ref.pointee.data
         pkt.pointee.size = Int32(bytes.count)

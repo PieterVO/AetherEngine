@@ -650,9 +650,11 @@ private func playSmokeTest(url: URL, seconds: Double, live: Bool, forceSoftware:
         pv.addSubview(label)
         NotificationCenter.default.addObserver(forName: Notification.Name("aetherctl.elmode"), object: nil, queue: .main) { note in
             let text = (note.object as? String) ?? ""
-            label.stringValue = " " + text + " "
-            label.isHidden = false
-            win.title = "AetherEngine: " + text
+            MainActor.assumeIsolated {
+                label.stringValue = " " + text + " "
+                label.isHidden = false
+                win.title = "AetherEngine: " + text
+            }
         }
         win.orderFront(nil)
         engine.bind(view: pv)

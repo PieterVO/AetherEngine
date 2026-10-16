@@ -1044,7 +1044,7 @@ final class SoftwarePlaybackHost {
                dolbyVisionHandling: dolbyVisionHandling) {
             let vIdx = dem.videoStreamIndex
             await BlockingWork.detached(priority: .userInitiated) {
-                VideoConfigRecord.completeHEVCRecordFromInBandParameterSets(demuxer: dem, streamIndex: vIdx)
+                _ = VideoConfigRecord.completeHEVCRecordFromInBandParameterSets(demuxer: dem, streamIndex: vIdx)
             }.value
             // A stop() can land on this suspension as on the start-position seek below.
             guard !stopRequested else { return }

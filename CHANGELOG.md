@@ -37,7 +37,8 @@ the public-API contract.
   live open the origin answers with a status fails typed with that status at once
   (`AVIOReaderError.httpStatus`, `sourceRateLimited` or `sourceRefused` at the host), where the read
   loop used to spend the open budget on the same request and hand back an untyped read failure.
-  `LiveStreamRefusalRetryTests`.
+  A server error that is not a refusal (a 500 or 502 while a tuner spins up) is asked once more
+  first, as the read loop did. `LiveStreamRefusalRetryTests`.
 - **Profile 7 FEL chroma residual is sampled where the base chroma sits.** With a quarter-resolution
   enhancement layer (1080p under 4K), the chroma kernel read the enhancement chroma at texel centres,
   a quarter of an EL chroma texel up and to the left of the co-sited (top-left) chroma location HDR

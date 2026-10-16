@@ -102,8 +102,8 @@ struct LiveStreamRefusalRetryTests {
         return data
     }
 
-    /// The backoff scale and the refusal budget are handed to this reader alone: the process-wide
-    /// statics are shared with every test running beside this one.
+    /// The backoff scale and the refusal budget are handed to this reader alone, so no other test's
+    /// reader sees them.
     private static func makeLiveReader(_ url: URL, refusalBudget: TimeInterval? = nil) -> AVIOReader {
         AVIOReader(url: url, label: "live", prefetchEnabled: true, isLive: true,
                    backoffScale: 0.02, liveRefusalRetryBudget: refusalBudget)

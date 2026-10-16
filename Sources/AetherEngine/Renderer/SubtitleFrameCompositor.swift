@@ -9,16 +9,17 @@ import Foundation
 /// pictureInPictureActive; fullscreen subtitles stay with the host's on-frame overlay. Playback wins
 /// over subtitles: every failure path returns the original buffer untouched.
 ///
-/// Text cues follow the user's system caption style (`SubtitleCaptionStyle`), re-read when the
-/// setting changes; with nothing customised the look is the default one.
+/// Text cues follow the user's system caption style (`SubtitleCaptionStyle`), read once when the
+/// compositor is first enabled and re-read when the setting changes; with nothing customised the
+/// look is the default one.
 final class SubtitleFrameCompositor: @unchecked Sendable {
 
+    /// Nothing is read from the system here: the compositor sits in every software renderer and
+    /// stays disabled outside PiP, so the style is loaded on the first `update(enabled: true)`.
     init(styleProvider: @escaping @Sendable () -> SubtitleCaptionStyle = SubtitleCaptionStyle.current,
          observesSystemStyle: Bool = true) {
-        style = styleProvider()
-        if observesSystemStyle {
-            styleObservation = SubtitleCaptionStyle.observeChanges { [weak self] in self?.setStyle($0) }
-        }
+        self.styleProvider = styleProvider
+        self.observesSystemStyle = observesSystemStyle
     }
 
     struct TextLayout: Equatable {
@@ -81,8 +82,14 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
     /// Cache key of the overlay currently rendered (active cue ids); nil = no overlay cached.
     private var cachedCueIDs: [Int]?
     private var cachedOverlay: CIImage?
+    /// The style `cachedOverlay` was drawn in. Compared on a hit, so an overlay rendered from a
+    /// snapshot that a `setStyle` has since superseded can never be served.
+    private var cachedStyle: SubtitleCaptionStyle?
     private var loggedFailure = false
-    private var style: SubtitleCaptionStyle
+    private let styleProvider: @Sendable () -> SubtitleCaptionStyle
+    private let observesSystemStyle: Bool
+    private var style: SubtitleCaptionStyle = .standard
+    private var styleLoaded = false
     private var styleObservation: SubtitleCaptionStyle.Observation?
 
     private lazy var ciContext = CIContext(options: [.cacheIntermediates: false])
@@ -95,16 +102,37 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
         self.cues = cues
         self.enabled = enabled
         if delaySeconds.isFinite { self.delaySeconds = delaySeconds }
+        let needsStyle = enabled && !styleLoaded
+        lock.unlock()
+        if needsStyle { loadStyle() }
+    }
+
+    /// The one system read, with the observation seeded from it. Runs outside the lock: a settings
+    /// change can arrive on another thread and call `setStyle`.
+    private func loadStyle() {
+        let initial = styleProvider()
+        let observation = observesSystemStyle
+            ? SubtitleCaptionStyle.observeChanges(startingFrom: initial) { [weak self] in self?.setStyle($0) }
+            : nil
+        lock.lock()
+        // A `setStyle` that got in first is newer than what was just read.
+        if !styleLoaded {
+            style = initial
+            styleLoaded = true
+        }
+        if styleObservation == nil { styleObservation = observation }
         lock.unlock()
     }
 
     /// Any thread; the system caption style changed. The cached overlay was drawn in the old one.
     func setStyle(_ new: SubtitleCaptionStyle) {
         lock.lock()
+        styleLoaded = true
         if new != style {
             style = new
             cachedCueIDs = nil
             cachedOverlay = nil
+            cachedStyle = nil
         }
         lock.unlock()
     }
@@ -121,7 +149,7 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
 
         let active = Self.activeCues(in: cues, at: ptsSeconds, delaySeconds: delay)
         guard !active.isEmpty else {
-            lock.lock(); cachedCueIDs = nil; cachedOverlay = nil; lock.unlock()
+            lock.lock(); cachedCueIDs = nil; cachedOverlay = nil; cachedStyle = nil; lock.unlock()
             return buffer
         }
 
@@ -129,7 +157,7 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
         let height = CVPixelBufferGetHeight(buffer)
         let overlay: CIImage
         lock.lock()
-        let cacheHit = cachedCueIDs == active.map(\.id) ? cachedOverlay : nil
+        let cacheHit = cachedCueIDs == active.map(\.id) && cachedStyle == style ? cachedOverlay : nil
         lock.unlock()
         if let cacheHit {
             overlay = cacheHit
@@ -143,6 +171,7 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
             lock.lock()
             cachedCueIDs = active.map(\.id)
             cachedOverlay = overlay
+            cachedStyle = style
             lock.unlock()
         }
 
@@ -233,8 +262,8 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
     nonisolated static func font(for run: SubtitleTextRun, baseSize: CGFloat,
                                  style: SubtitleCaptionStyle = .standard) -> CTFont {
         let size = run.fontSize.map { baseSize * CGFloat($0) / 16.0 } ?? baseSize
-        // The user's font beats the cue's, the cue's beats the default.
-        let name = style.fontName ?? run.fontName ?? "HelveticaNeue-Medium"
+        // The field's precedence orders the user's font and the cue's; the default comes last.
+        let name = style.resolvedFontName(cueFont: run.fontName) ?? "HelveticaNeue-Medium"
         let base = CTFontCreateWithName(name as CFString, size, nil)
         var traits: CTFontSymbolicTraits = []
         if run.isBold { traits.insert(.traitBold) }
@@ -330,8 +359,20 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
             }
             let textX = originX + pad
             let baseline = cursorY + pad / 2 - entry.bounds.minY
+            let edge = style.edgeStyle?.value
+            if edge == .uniform {
+                // The outline is its own pass underneath: stroking and filling in one pass lays the
+                // stroke's inner half over the glyph. At twice the line width only the outer half
+                // shows once the fill goes over it.
+                ctx.saveGState()
+                applyEdge(edge, in: ctx, fontSize: layout.fontSize)
+                ctx.textPosition = CGPoint(x: textX, y: baseline)
+                CTLineDraw(entry.line, ctx)
+                ctx.restoreGState()
+            }
             ctx.saveGState()
-            applyEdge(style.edgeStyle, in: ctx, fontSize: layout.fontSize)
+            if edge != .uniform { applyEdge(edge, in: ctx, fontSize: layout.fontSize) }
+            ctx.setTextDrawingMode(.fill)
             ctx.textPosition = CGPoint(x: textX, y: baseline)
             CTLineDraw(entry.line, ctx)
             ctx.restoreGState()
@@ -343,7 +384,7 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
     }
 
     /// Edge treatment for the glyphs about to be drawn, as the system's five styles: an outline for
-    /// uniform, a soft offset shadow, and hard one-sided shadows for raised and depressed. The
+    /// uniform (a stroke-only setup, drawn as a pass of its own before the fill), a soft offset shadow, and hard one-sided shadows for raised and depressed. The
     /// context's y axis points up, so raised puts the shadow below the glyph.
     nonisolated static func applyEdge(_ edge: SubtitleCaptionStyle.EdgeStyle?, in ctx: CGContext,
                                       fontSize: CGFloat) {
@@ -351,9 +392,9 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
         let step = max(1, fontSize * 0.06)
         switch edge {
         case .uniform:
-            ctx.setTextDrawingMode(.fillStroke)
+            ctx.setTextDrawingMode(.stroke)
             ctx.setStrokeColor(black)
-            ctx.setLineWidth(step * 1.5)
+            ctx.setLineWidth(step * 1.5 * 2)
             ctx.setLineJoin(.round)
         case .dropShadow:
             ctx.setShadow(offset: CGSize(width: step, height: -step), blur: step * 1.5, color: black)
@@ -450,6 +491,7 @@ final class SubtitleFrameCompositor: @unchecked Sendable {
         enabled = false
         cachedCueIDs = nil
         cachedOverlay = nil
+        cachedStyle = nil
         pool = nil
         poolFormat = nil
         loggedFailure = false

@@ -33,10 +33,10 @@ struct SoftwareAPACFormatDescriptionTests {
         guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *) else { return }
         let (encoder, _) = try encoded(.l512)
         var size = 0
-        let cookie = CMAudioFormatDescriptionGetMagicCookie(encoder.formatDescription, sizeOut: &size)
-        #expect(cookie != nil)
+        let found = CMAudioFormatDescriptionGetMagicCookie(encoder.formatDescription, sizeOut: &size)
+        let cookie = try #require(found)
         #expect(size > 0)
-        #expect(Data(bytes: cookie!, count: size) == encoder.magicCookie)
+        #expect(Data(bytes: cookie, count: size) == encoder.magicCookie)
         let asbd = try #require(CMAudioFormatDescriptionGetStreamBasicDescription(encoder.formatDescription)?.pointee)
         #expect(asbd.mFramesPerPacket == 1024)
         #expect(asbd.mChannelsPerFrame == UInt32(SpatialSpeakerLayout.l512.channelCount))
@@ -45,9 +45,15 @@ struct SoftwareAPACFormatDescriptionTests {
     private final class Feed {
         var packets: [Data]
         var index = 0
-        var buffer = [UInt8](repeating: 0, count: 1 << 16)
-        var description = AudioStreamPacketDescription()
+        let capacity = 1 << 16
+        /// Stable storage the converter reads after the callback returns.
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: 1 << 16, alignment: 16)
+        let description = UnsafeMutablePointer<AudioStreamPacketDescription>.allocate(capacity: 1)
         init(_ packets: [Data]) { self.packets = packets }
+        deinit {
+            buffer.deallocate()
+            description.deallocate()
+        }
     }
 
     @Test("packets decode from the sample buffer's own format description")
@@ -95,16 +101,15 @@ struct SoftwareAPACFormatDescriptionTests {
             guard feed.index < feed.packets.count else { count.pointee = 0; return noErr }
             let packet = feed.packets[feed.index]
             feed.index += 1
-            packet.withUnsafeBytes { src in
-                feed.buffer.withUnsafeMutableBytes { $0.baseAddress!.copyMemory(from: src.baseAddress!, byteCount: packet.count) }
-            }
-            feed.description = AudioStreamPacketDescription(
+            guard packet.count <= feed.capacity else { count.pointee = 0; return -1 }
+            packet.withUnsafeBytes { feed.buffer.copyMemory(from: $0.baseAddress!, byteCount: packet.count) }
+            feed.description.pointee = AudioStreamPacketDescription(
                 mStartOffset: 0, mVariableFramesInPacket: 0, mDataByteSize: UInt32(packet.count))
             count.pointee = 1
-            feed.buffer.withUnsafeMutableBytes { data.pointee.mBuffers.mData = $0.baseAddress }
+            data.pointee.mBuffers.mData = feed.buffer
             data.pointee.mBuffers.mDataByteSize = UInt32(packet.count)
             data.pointee.mBuffers.mNumberChannels = 0
-            packetDescription?.pointee = withUnsafeMutablePointer(to: &feed.description) { $0 }
+            packetDescription?.pointee = feed.description
             return noErr
         }
         var decodedFrames = 0

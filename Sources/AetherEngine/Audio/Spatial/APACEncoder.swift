@@ -117,6 +117,8 @@ final class APACEncoder {
     static func cookiedFormatDescription(
         apac: AVAudioFormat, cookie: Data, layoutTag: AudioChannelLayoutTag
     ) -> CMAudioFormatDescription? {
+        // Without the cookie the description is the one that plays silence.
+        guard !cookie.isEmpty else { return nil }
         var asbd = apac.streamDescription.pointee
         if asbd.mFramesPerPacket == 0 { asbd.mFramesPerPacket = UInt32(framesPerPacket) }
         var layout = AudioChannelLayout()

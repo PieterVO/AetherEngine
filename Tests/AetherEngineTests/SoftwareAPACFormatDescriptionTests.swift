@@ -114,20 +114,23 @@ struct SoftwareAPACFormatDescriptionTests {
         }
         var decodedFrames = 0
         var failure: OSStatus = noErr
-        for _ in 0..<64 {
-            list.pointee.mNumberBuffers = UInt32(channels)
-            withUnsafeMutablePointer(to: &list.pointee.mBuffers) { base in
-                let buffers = UnsafeMutableBufferPointer(start: base, count: channels)
-                for c in 0..<channels {
-                    buffers[c] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(chunk * 4), mData: planes[c])
+        // The converter holds `feed` unretained, so it has to outlive every call.
+        withExtendedLifetime(feed) {
+            for _ in 0..<64 {
+                list.pointee.mNumberBuffers = UInt32(channels)
+                withUnsafeMutablePointer(to: &list.pointee.mBuffers) { base in
+                    let buffers = UnsafeMutableBufferPointer(start: base, count: channels)
+                    for c in 0..<channels {
+                        buffers[c] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(chunk * 4), mData: planes[c])
+                    }
                 }
+                var frames = UInt32(chunk)
+                let status = AudioConverterFillComplexBuffer(
+                    converter, input, Unmanaged.passUnretained(feed).toOpaque(), &frames, list, nil)
+                if status != noErr && frames == 0 { failure = status; break }
+                decodedFrames += Int(frames)
+                if frames == 0 { break }
             }
-            var frames = UInt32(chunk)
-            let status = AudioConverterFillComplexBuffer(
-                converter, input, Unmanaged.passUnretained(feed).toOpaque(), &frames, list, nil)
-            if status != noErr && frames == 0 { failure = status; break }
-            decodedFrames += Int(frames)
-            if frames == 0 { break }
         }
         #expect(failure == noErr, "decode failed with \(failure)")
         #expect(decodedFrames > 0)

@@ -209,6 +209,18 @@ struct SoftwareAtmosRouteTests {
         }
     }
 
+    @Test("the look at a closed demuxer finds no audio packet and touches no stream")
+    func closedDemuxerYieldsNoPacket() throws {
+        let demuxer = Demuxer()
+        try demuxer.open(reader: DataIOReader(data: Self.silentWAV()))
+        demuxer.close()
+        let probe = SoftwarePlaybackHost.firstEAC3Entry(demuxer: demuxer, streamIndex: 0)
+        guard case .noAudioPacket = probe else {
+            Issue.record("expected .noAudioPacket, got \(probe)")
+            return
+        }
+    }
+
     private static func silentWAV() -> Data {
         let pcm = Data(count: 48_000 * 2 * 2)
         var d = Data()

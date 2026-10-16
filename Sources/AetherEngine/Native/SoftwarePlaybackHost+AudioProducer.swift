@@ -83,7 +83,6 @@ extension SoftwarePlaybackHost {
     nonisolated static func firstEAC3Entry(
         demuxer: Demuxer, streamIndex: Int32
     ) -> SoftwareEAC3Passthrough.Probe {
-        guard let par = demuxer.stream(at: streamIndex)?.pointee.codecpar else { return .noAudioPacket }
         var result: SoftwareEAC3Passthrough.Probe = .noAudioPacket
         var heldBytes = 0
         var attempts = 0
@@ -93,7 +92,14 @@ extension SoftwarePlaybackHost {
             if heldBytes > SoftwareAtmosRoute.jocPeekByteBudget { budgetHit = true; return true }
             guard packet.pointee.stream_index == streamIndex, packet.pointee.size > 0 else { return false }
             attempts += 1
-            if let entry = SoftwareEAC3Passthrough.entry(codecpar: par, packet: packet) {
+            // The stream is read only inside `withStream`, which close() waits out, and the result is
+            // plain values: a stop() that closes the demuxer cannot free what is read here, and
+            // nothing keeps a pointer into the stream afterwards. A closed demuxer has no stream.
+            let entry = demuxer.withStream(at: streamIndex) { stream -> SoftwareEAC3Passthrough.Entry? in
+                guard let par = stream.pointee.codecpar else { return nil }
+                return SoftwareEAC3Passthrough.entry(codecpar: par, packet: packet)
+            } ?? nil
+            if let entry {
                 result = .found(entry)
                 return true
             }

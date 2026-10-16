@@ -1699,6 +1699,18 @@ final class SoftwarePlaybackHost {
         // already makes with `sessionStartPts`. For a zero-based source the two
         // axes coincide and this is the identity, which is why the omission only
         // ever showed on a mid-stream-joined one.
+        //
+        // A seek before the clock is armed (a cold load that has not played yet) has no session zero
+        // either: the demux loop only resolves it when it first arms the clock, and this seek arms the
+        // clock itself, so the loop never would. Derive it the way a resume does, from the source's
+        // origin, and report it, so a pre-play seek lands on the same content as one after play().
+        if !isLive, !clockArmed {
+            let zero = SWClockAnchorPolicy.resumeSessionZero(sourceOriginSeconds: dem.resolvedSourceStartOrigin)
+            if zero != clockSessionZero {
+                clockSessionZero = zero
+                onClockSessionZero?(zero)
+            }
+        }
         let sourceSeconds = SWClockAnchorPolicy.sourceSeconds(
             forSession: seconds,
             sessionZeroSeconds: clockSessionZero

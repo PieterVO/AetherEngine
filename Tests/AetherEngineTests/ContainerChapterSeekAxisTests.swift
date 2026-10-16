@@ -22,7 +22,7 @@ struct ContainerChapterSeekAxisTests {
 
     @Test("A container that starts at 5 s publishes its chapters from the content start")
     func offsetContainerIsRebasedOntoOrigin() {
-        // The fel-clip-b shape: container start 5.0 s, chapters stated in container time.
+        // A Matroska file whose first cluster starts at 5 s, chapters stated in container time.
         let chapters = Demuxer.chapterInfos(
             source([raw(5, 9, "Alpha"), raw(9, 13, "Bravo"), raw(13, 17, "Charlie"), raw(17, 21.2, "Delta")],
                    formatStart: 5),
@@ -201,8 +201,12 @@ struct ContainerChapterEngineWiringTests {
 
 /// Opt-in media check of the published axis against the real seek. Each clip is named by an environment
 /// variable so no media is committed; a test skips when its variable is unset.
-///   AE_CHAPTER_CLIP_OFFSET  container start 5.0 s, chapters at 5/9/13/17 s (fel-clip-b)
-///   AE_CHAPTER_CLIP_ZERO    container start 0, chapters at 0/4/8/12 s (fel-clip-a)
+///   AE_CHAPTER_CLIP_OFFSET  a Matroska file whose first cluster starts at 5 s, chapters at 5/9/13/17 s
+///   AE_CHAPTER_CLIP_ZERO    a Matroska file that starts at 0, chapters at 0/4/8/12 s
+///
+/// The software half asserts `sourceTime`, the raw container time the clock really reached. On the
+/// software host a seek publishes its own target as `currentTime`, so that value alone passes even when
+/// the content landed early.
 @Suite("Container chapter seek lands on the chapter (media)", .serialized, .timeLimit(.minutes(3)))
 @MainActor
 struct ContainerChapterSeekMediaTests {
@@ -211,30 +215,70 @@ struct ContainerChapterSeekMediaTests {
         ProcessInfo.processInfo.environment[variable].map { URL(fileURLWithPath: $0) }
     }
 
-    /// Seeks to a chapter start and returns the clock once it settles near the target (or after 2 s).
-    private func seekAndSettle(_ engine: AetherEngine, to target: Double) async throws -> Double {
-        await engine.seek(to: target)
-        let deadline = ContinuousClock.now + .seconds(2)
-        while ContinuousClock.now < deadline, abs(engine.currentTime - target) > 0.1 {
+    /// Polls until `condition` holds or the timeout passes; returns whether it held.
+    private func waitUntil(timeout: Duration, _ condition: () -> Bool) async throws -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
             try await Task.sleep(for: .milliseconds(50))
         }
-        return engine.currentTime
+        return condition()
     }
 
-    private func checkEveryChapterLands(url: URL, software: Bool, expectedStarts: [Double]) async throws {
+    /// Seeks to a chapter start and waits for the clock to settle on the expected value of `reading`.
+    private func seekAndSettle(_ engine: AetherEngine, to target: Double, expecting expected: Double,
+                               reading: (AetherEngine) -> Double) async throws -> Double {
+        await engine.seek(to: target)
+        _ = try await waitUntil(timeout: .seconds(4)) { abs(reading(engine) - expected) <= 0.1 }
+        return reading(engine)
+    }
+
+    private func checkEveryChapterLands(url: URL, software: Bool, expectedStarts: [Double],
+                                        expectedSourceTimes: [Double]) async throws {
         let engine = try AetherEngine()
         var options = LoadOptions()
         options.suppressDisplayCriteria = true
         options.preferredDecodePath = software ? .software : .automatic
+        options.autoplay = false
         try await engine.load(url: url, options: options)
         defer { engine.stop() }
 
+        // Native: the item must be ready before it takes a seek, or the seek is deferred and superseded.
+        let ready = try await waitUntil(timeout: .seconds(20)) { engine.isSessionReady }
+        #expect(ready, "software=\(software) session ready")
+
         let chapters = engine.mediaChapters
         #expect(chapters.map(\.startSeconds) == expectedStarts, "published chapter starts")
-        for chapter in chapters {
-            let landed = try await seekAndSettle(engine, to: chapter.startSeconds)
-            #expect(abs(landed - chapter.startSeconds) < 0.1,
-                    "software=\(software) chapter \(chapter.id) @ \(chapter.startSeconds) landed at \(landed)")
+
+        if software {
+            // Before play(): the clock is not armed yet, the case a cold seek has to convert on its own.
+            for (chapter, source) in zip(chapters, expectedSourceTimes) {
+                let landed = try await seekAndSettle(engine, to: chapter.startSeconds, expecting: source) {
+                    $0.sourceTime
+                }
+                #expect(abs(landed - source) < 0.1,
+                        "before play: chapter \(chapter.id) @ \(chapter.startSeconds) sourceTime \(landed), want \(source)")
+            }
+            // After play(): the clock is armed, the normal path.
+            engine.play()
+            let playing = try await waitUntil(timeout: .seconds(10)) { engine.state == .playing }
+            #expect(playing, "software play() reached .playing")
+            for (chapter, source) in zip(chapters, expectedSourceTimes) {
+                await engine.seek(to: chapter.startSeconds)
+                // The clock runs on from the landing, so accept a short window past the chapter start.
+                let landed = try await waitUntil(timeout: .seconds(4)) {
+                    let t = engine.sourceTime
+                    return t >= source - 0.1 && t < source + 2
+                }
+                #expect(landed, "after play: chapter \(chapter.id) @ \(chapter.startSeconds) sourceTime \(engine.sourceTime), want \(source)")
+            }
+        } else {
+            for chapter in chapters {
+                let landed = try await seekAndSettle(engine, to: chapter.startSeconds,
+                                                     expecting: chapter.startSeconds) { $0.currentTime }
+                #expect(abs(landed - chapter.startSeconds) < 0.1,
+                        "native chapter \(chapter.id) @ \(chapter.startSeconds) landed at \(landed)")
+            }
         }
     }
 
@@ -242,15 +286,19 @@ struct ContainerChapterSeekMediaTests {
           .enabled(if: ContainerChapterSeekMediaTests.clip("AE_CHAPTER_CLIP_OFFSET") != nil))
     func offsetContainerChaptersLand() async throws {
         let url = try #require(Self.clip("AE_CHAPTER_CLIP_OFFSET"))
-        try await checkEveryChapterLands(url: url, software: true, expectedStarts: [0, 4, 8, 12])
-        try await checkEveryChapterLands(url: url, software: false, expectedStarts: [0, 4, 8, 12])
+        try await checkEveryChapterLands(url: url, software: true, expectedStarts: [0, 4, 8, 12],
+                                         expectedSourceTimes: [5, 9, 13, 17])
+        try await checkEveryChapterLands(url: url, software: false, expectedStarts: [0, 4, 8, 12],
+                                         expectedSourceTimes: [5, 9, 13, 17])
     }
 
     @Test("Chapter starts on a zero-start container land on the chapter, software and native",
           .enabled(if: ContainerChapterSeekMediaTests.clip("AE_CHAPTER_CLIP_ZERO") != nil))
     func zeroContainerChaptersLand() async throws {
         let url = try #require(Self.clip("AE_CHAPTER_CLIP_ZERO"))
-        try await checkEveryChapterLands(url: url, software: true, expectedStarts: [0, 4, 8, 12])
-        try await checkEveryChapterLands(url: url, software: false, expectedStarts: [0, 4, 8, 12])
+        try await checkEveryChapterLands(url: url, software: true, expectedStarts: [0, 4, 8, 12],
+                                         expectedSourceTimes: [0, 4, 8, 12])
+        try await checkEveryChapterLands(url: url, software: false, expectedStarts: [0, 4, 8, 12],
+                                         expectedSourceTimes: [0, 4, 8, 12])
     }
 }

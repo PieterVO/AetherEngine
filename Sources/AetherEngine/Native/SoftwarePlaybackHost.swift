@@ -475,6 +475,23 @@ final class SoftwarePlaybackHost {
         demuxCondition.unlock()
     }
 
+    /// The live join's placement (#797), compare-and-set on the seek generation: a seek that landed
+    /// between the feeder's decision and this write already moved the cursor where the viewer asked.
+    nonisolated private func placeFeedCursor(_ value: Int, ifGeneration generation: UInt64) -> Bool {
+        feedLock.lock()
+        guard _seekGeneration == generation else {
+            feedLock.unlock()
+            return false
+        }
+        _feedCursor = value
+        feedLock.unlock()
+        audioLookahead.reset(to: value)
+        demuxCondition.lock()
+        demuxCondition.broadcast()
+        demuxCondition.unlock()
+        return true
+    }
+
     nonisolated private var dvrRecoveryPending: Bool {
         feedLock.lock(); defer { feedLock.unlock() }
         return _dvrRecoveryTicket != nil
@@ -2234,8 +2251,8 @@ final class SoftwarePlaybackHost {
                                                    newestPts: self.newestSourcePts,
                                                    at: ProcessInfo.processInfo.systemUptime)
             }
-            let placeCursor: @Sendable (Int) -> Void = { [weak self] seq in
-                self?.setFeedCursor(seq)
+            let placeCursor: @Sendable (Int, UInt64) -> Bool = { [weak self] seq, generation in
+                self?.placeFeedCursor(seq, ifGeneration: generation) ?? false
             }
             let setSourceEnded: @Sendable () -> Void = { [weak self] in
                 self?.sourceEnded = true
@@ -2562,7 +2579,7 @@ final class SoftwarePlaybackHost {
         advanceCursor: @Sendable (Int) -> Void,
         recoverCursor: @Sendable (Int) -> Void,
         liveJoinPlacement: @Sendable () -> SoftwareLiveJoinPolicy.Decision? = { .fromStart },
-        placeCursor: @Sendable (Int) -> Void = { _ in },
+        placeCursor: @Sendable (Int, UInt64) -> Bool = { _, _ in false },
         seekGeneration: @Sendable () -> UInt64,
         currentRate: @Sendable () -> Float,
         isPlaying: @Sendable () -> Bool,
@@ -2736,7 +2753,7 @@ final class SoftwarePlaybackHost {
                     liveJoinPending = false
                     let cursor = readCursor()
                     if let seq = ring.seq(forKeyframeAtOrBefore: targetPts), seq > cursor,
-                       let keyframe = ring.packet(atSeq: seq) {
+                       let keyframe = ring.packet(atSeq: seq), placeCursor(seq, generation) {
                         let skipped = keyframe.pts - (ring.packet(atSeq: cursor)?.pts ?? keyframe.pts)
                         EngineLog.emit(
                             "[SWHost] live join placed \(String(format: "%.1f", SoftwareLiveJoinPolicy.leadSeconds))s "
@@ -2744,7 +2761,6 @@ final class SoftwarePlaybackHost {
                             + "connect burst (cursor seq=\(cursor) -> \(seq), keyframe pts=\(String(format: "%.2f", keyframe.pts)))",
                             category: .swPlayback
                         )
-                        placeCursor(seq)
                         return true
                     }
                 }

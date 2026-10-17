@@ -82,6 +82,21 @@ third-party patent licensing; integrators who enable them are responsible for th
 
 ### Fixed
 
+- **The HEVC-in-MPEG-TS HLS VOD ingest under `heldSourceConnection` no longer fails on a slow origin.**
+  A segment body now reaches the demuxer as it arrives instead of after its last byte, the carriage
+  probe reads the first segment's head and hands the still open response to the producer instead of
+  downloading it whole, and the 45 s ceiling on a whole exchange is gone: it now covers only the wait
+  for a response head, and a body is limited by its size and by 30 s without a byte, so a large
+  segment that keeps arriving is never cut off. That ceiling surfaced as `NSPOSIXErrorDomain Code=60`,
+  which named neither cause; a stall now says `body stalled, no bytes for 30 s after <received>/<expected>
+  bytes in <elapsed> s`. A seek that abandons a body with at most 2 MB left drains it for up to 3 s and
+  keeps the connection, and the next request waits for that instead of opening a second connection
+  beside it; a larger remainder still closes it. With the FIFO full the current segment is read to its
+  end, so a paused session leaves the connection idle between two requests, not mid-body. Measured on a
+  loopback origin at 200 KB/s with 11.6 MB segments: before, the probe died at 45.1 s with `Code=60` and
+  the session left the ingest; after, the ingest held and played. The h2 path's 45 s resource timeout
+  is lifted the same way (#732, thanks @qoli for the paired device runs).
+
 - **The package compiles in Release with Xcode 26 again.** `FelResidualMeasure` (the
   `AETHER_FEL_MEASURE` diagnostic from 7.37.0) formatted its luma-band line inside the closure it
   hands its queue, as one `+` chain of three `map`/`joined` expressions, and Xcode 26.3's type checker

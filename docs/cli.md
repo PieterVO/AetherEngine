@@ -284,7 +284,12 @@ connection after five seconds and cost exactly one re-request at the frontier wh
 On a finite HEVC-in-MPEG-TS HLS VOD (the AE#268 ingest) the same flag puts the playlist and every
 segment on one persistent HTTP/1.1 connection (AE#732); the observable there is the
 `[HLSVODIngest] AE#732 connection ... open` and `... closed after N requests reason=...` lines, one
-pair per connection, and a run without seeks should show exactly one.
+pair per connection. A seek mid-body logs `draining abandoned body, <received>/<expected> bytes` and
+then `drained, kept for the next request`, or closes with `abandoned mid-body`; a stalled body ends
+the session with `body stalled, no bytes for 30 s after ...`. The engine's own repositions onto segment
+0 right after the open still cost one connection each. For the slow-origin case, serve 11 MB HEVC-in-TS
+segments from a keep-alive origin at 200 KB/s shared across its connections: each segment then takes
+about 58 s, longer than the 45 s a whole exchange used to be allowed (#732).
 
 `--progressive-segments` sets `LoadOptions.progressiveSegmentDelivery`: each VOD segment is served
 while it is written. Run it against a throttled origin and compare the `FIRSTFRAME` and first

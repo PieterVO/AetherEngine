@@ -113,7 +113,8 @@ public enum AudioDelivery: String, Sendable, Equatable, CaseIterable {
     /// The audio is decoded and re-encoded for the fMP4 pipeline, because its codec is not fMP4-legal
     /// or AVPlayer rejects it there. The channel bridge (FLAC or E-AC-3) is lossless for the bed
     /// channels, and object metadata in a TrueHD-MAT or JOC bitstream does not survive its PCM
-    /// intermediate; under `LoadOptions.objectAudioRendering` TrueHD Atmos and DTS:X are rendered with
+    /// intermediate; under `LoadOptions.objectAudioRendering`, in a build with the `TrueHDObjectAudio` /
+    /// `DTSXObjectAudio` traits (off by default), TrueHD Atmos and DTS:X are rendered with
     /// their objects and heights into a speaker bed and encoded as APAC instead.
     case bridged
     /// libavcodec decodes the audio and the engine renders it itself (the software path and the

@@ -466,6 +466,12 @@ final class HLSVODIngestReader: TimeSeekableIOReader, @unchecked Sendable {
             defer { primedSegment = nil }
             return primedSegment
         }
+        // A probe response this run does not open with holds the origin; let it go before any request,
+        // or that request waits behind a body nobody will read.
+        if let ready = primed, segments.first?.1 != ready.url || segments.first?.0.crypt != nil {
+            ready.body.abandon()
+            primed = nil
+        }
         defer { primed?.body.abandon() }
         for (offset, (segment, url)) in segments.enumerated() {
             try Task.checkCancellation()
@@ -512,7 +518,7 @@ final class HLSVODIngestReader: TimeSeekableIOReader, @unchecked Sendable {
             while true {
                 let chunk = try await body.next()
                 if let chunk {
-                    pending.append(chunk)
+                    if pending.isEmpty { pending = chunk } else { pending.append(chunk) }
                     total += chunk.count
                 }
                 if !checked, chunk == nil || !pending.isEmpty {

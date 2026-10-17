@@ -89,9 +89,9 @@ third-party patent licensing; integrators who enable them are responsible for th
   for a response head, and a body is limited by its size and by 30 s without a byte, so a large
   segment that keeps arriving is never cut off. That ceiling surfaced as `NSPOSIXErrorDomain Code=60`,
   which named neither cause; a stall now says `body stalled, no bytes for 30 s after <received>/<expected>
-  bytes in <elapsed> s`. A seek that abandons a body with at most 2 MB left drains it for up to 3 s and
-  keeps the connection, and the next request waits for that instead of opening a second connection
-  beside it; a larger remainder still closes it. With the FIFO full the current segment is read to its
+  bytes in <elapsed> s`. A seek that abandons a body with at most 2 MB left, at a rate that brings it in within 3 s,
+  drains it and keeps the connection, and the next request waits for that instead of opening a
+  second connection beside it; a larger or slower remainder closes it at once. With the FIFO full the current segment is read to its
   end, so a paused session leaves the connection idle between two requests, not mid-body. Measured on a
   loopback origin at 200 KB/s with 11.6 MB segments: before, the probe died at 45.1 s with `Code=60` and
   the session left the ingest; after, the ingest held and played. The h2 path's 45 s resource timeout

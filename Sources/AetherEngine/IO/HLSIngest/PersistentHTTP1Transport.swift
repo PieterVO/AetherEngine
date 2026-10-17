@@ -159,6 +159,9 @@ final class PersistentHTTP1Transport: @unchecked Sendable {
     /// deadline or its end.
     private func checkOut(_ origin: Origin) async throws -> PersistentHTTP1Connection {
         while true {
+            // A request cancelled while it waited must not take the connection: its cancellation
+            // handler would close the socket the drain just kept.
+            try Task.checkCancellation()
             if let connection = try claim(origin) { return connection }
             await withCheckedContinuation { (waiter: CheckedContinuation<Void, Never>) in
                 let parked = lock.withLock { () -> Bool in
@@ -305,6 +308,10 @@ final class PersistentHTTP1Transport: @unchecked Sendable {
         /// The next piece of the body, nil at its end.
         func next() async throws -> Data? {
             guard let connection else { return nil }
+            if Task.isCancelled {
+                abandon()
+                throw CancellationError()
+            }
             let current = lock.withLock { () -> PersistentHTTP1Connection.Framing? in
                 guard !released, !abandoned else { return nil }
                 reading = true
@@ -313,11 +320,6 @@ final class PersistentHTTP1Transport: @unchecked Sendable {
             guard let current else {
                 if lock.withLock({ abandoned }) { throw CancellationError() }
                 return nil
-            }
-            if Task.isCancelled {
-                lock.withLock { reading = false }
-                abandon()
-                throw CancellationError()
             }
             let chunk: Data?
             let advanced: PersistentHTTP1Connection.Framing
@@ -373,15 +375,18 @@ final class PersistentHTTP1Transport: @unchecked Sendable {
             }
         }
 
-        /// Stops reading. Little left: drained in the background, the connection kept, and the next
-        /// request to this origin waits for it. Otherwise the connection is closed. Idempotent.
+        /// Stops reading. Little left, at a rate that brings it in before `drainDeadline`: drained in
+        /// the background, the connection kept, and the next request to this origin waits for it.
+        /// Otherwise the connection is closed at once, since a drain that cannot finish only delays the
+        /// next request by its deadline and loses the connection anyway. Idempotent.
         func abandon() {
             guard let connection else { return }
             let decision = lock.withLock { () -> (inFlight: Bool, drainable: Bool)? in
                 guard !released, !abandoned else { return nil }
                 abandoned = true
                 switch framing {
-                case .identity(let remaining): return (reading, remaining <= PersistentHTTP1Transport.maxDrainBytes)
+                case .identity(let remaining):
+                    return (reading, remaining <= PersistentHTTP1Transport.maxDrainBytes && drainsInTime(remaining))
                 case .chunked, .empty: return (reading, true)
                 case .untilClose: return (reading, false)
                 }
@@ -401,6 +406,15 @@ final class PersistentHTTP1Transport: @unchecked Sendable {
             if !decision.inFlight {
                 Task { await self.drain() }
             }
+        }
+
+        /// Under `lock`. Whether `remaining` bytes arrive within the drain deadline at the rate this body
+        /// has come in so far; a body too young to have a rate gets the benefit of the doubt.
+        private func drainsInTime(_ remaining: Int64) -> Bool {
+            let elapsed = Date().timeIntervalSince(started)
+            guard remaining > 0, received > 0, elapsed >= 0.25 else { return true }
+            let rate = Double(received) / elapsed
+            return Double(remaining) / rate <= PersistentHTTP1Transport.drainDeadline
         }
 
         private func drain() async {
@@ -594,7 +608,9 @@ final class PersistentHTTP1Connection: @unchecked Sendable {
             return "status \(head.status) body not drained"
         }
         var discarded = 0
+        let started = Date()
         while true {
+            if Date().timeIntervalSince(started) > Self.headDeadline { return "status \(head.status) body too slow to drain" }
             let (chunk, advanced) = try await readChunk(framing, progress: { "\(discarded) discarded bytes" })
             framing = advanced
             guard let chunk else { break }

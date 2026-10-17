@@ -1,3 +1,4 @@
+import CommonCrypto
 import Foundation
 import XCTest
 @testable import AetherEngine
@@ -150,16 +151,46 @@ final class Issue732PersistentHTTP1Tests: XCTestCase {
         XCTAssertEqual(server.connectionCount, 2)
     }
 
-    func testDrainPastItsDeadlineClosesAndTheNextRequestGoesAhead() async throws {
+    func testSlowRemainderClosesAtOnceInsteadOfDraining() async throws {
         let server = try XCTUnwrap(KeepAliveOrigin())
         defer { server.stop() }
         let segments = (0..<5).map { "seg\($0).ts" }
-        // Inside the drain budget, but at 10 ms a packet its rest outlasts the drain deadline.
+        // Inside the drain budget by size, but at 10 ms a packet its rest needs seconds.
         server.route = { path in
             if path == "/vod.m3u8" { return .init(body: Self.mediaPlaylist(segments)) }
             guard let index = segments.firstIndex(where: { "/" + $0 == path }) else { return .init(status: 404) }
             return index == 1
                 ? .init(body: Self.transportStream(marker: 1, packets: 1_000), trickleUs: 10_000)
+                : .init(body: Self.transportStream(marker: UInt8(index)))
+        }
+        let made = try await HLSVODIngestReader.makeIfHEVCMPEGTS(
+            playlistURL: server.url("/vod.m3u8"), httpHeaders: [:], persistentHTTP1: true)
+        let reader = try XCTUnwrap(made)
+        defer { reader.close() }
+
+        var head = [UInt8](repeating: 0, count: 188)
+        XCTAssertEqual(head.withUnsafeMutableBufferPointer { reader.read($0.baseAddress, size: 188) }, 188)
+        try await waitUntil { server.requests.contains { $0.path == "/seg1.ts" } }
+        try await Task.sleep(nanoseconds: 500_000_000) // long enough for the body to show its rate
+        let seekStarted = Date()
+        XCTAssertTrue(reader.seek(to: 20))
+        let stream = Self.drain(reader)
+        XCTAssertLessThan(Date().timeIntervalSince(seekStarted), 1.5, "no drain that could not finish")
+        XCTAssertEqual(stream.count, 3 * 188 * 3)
+        XCTAssertEqual(stream[Self.markerOffset], 2)
+        XCTAssertEqual(server.connectionCount, 2)
+    }
+
+    func testDrainPastItsDeadlineClosesAndTheNextRequestGoesAhead() async throws {
+        let server = try XCTUnwrap(KeepAliveOrigin())
+        defer { server.stop() }
+        let segments = (0..<5).map { "seg\($0).ts" }
+        // Fast enough to look drainable, then silent: only the drain deadline ends it.
+        server.route = { path in
+            if path == "/vod.m3u8" { return .init(body: Self.mediaPlaylist(segments)) }
+            guard let index = segments.firstIndex(where: { "/" + $0 == path }) else { return .init(status: 404) }
+            return index == 1
+                ? .init(body: Self.transportStream(marker: 1, packets: 1_000), stallAfter: 188 * 100)
                 : .init(body: Self.transportStream(marker: UInt8(index)))
         }
         let made = try await HLSVODIngestReader.makeIfHEVCMPEGTS(
@@ -179,6 +210,51 @@ final class Issue732PersistentHTTP1Tests: XCTestCase {
         XCTAssertEqual(stream.count, 3 * 188 * 3)
         XCTAssertEqual(stream[Self.markerOffset], 2)
         XCTAssertEqual(server.connectionCount, 2)
+    }
+
+    func testSeekOntoAnEncryptedSegmentLetsTheProbeResponseGo() async throws {
+        let server = try XCTUnwrap(KeepAliveOrigin())
+        defer { server.stop() }
+        let key = Data((0..<16).map { UInt8($0) })
+        let clear = (0..<5).map { Self.transportStream(marker: UInt8($0)) }
+        let encrypted = clear.map { Self.aes128CBC($0, key: key) }
+        var text = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n"
+        for index in 0..<5 {
+            if index == 2 {
+                text += "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x00000000000000000000000000000000\n"
+            }
+            text += "#EXTINF:6,\nseg\(index).ts\n"
+        }
+        let playlist = Data((text + "#EXT-X-ENDLIST").utf8)
+        // Segment 0 is large and slow, so its probe response is still open when the seek lands.
+        let first = Self.transportStream(marker: 0, packets: 2_000)
+        server.route = { path in
+            switch path {
+            case "/vod.m3u8": return .init(body: playlist)
+            case "/key.bin": return .init(body: key)
+            case "/seg0.ts": return .init(body: first, trickleUs: 2_000)
+            default:
+                guard let index = Int(path.dropFirst(4).dropLast(3)), (1..<5).contains(index) else {
+                    return .init(status: 404)
+                }
+                return .init(body: index >= 2 ? encrypted[index] : clear[index])
+            }
+        }
+        let made = try await HLSVODIngestReader.makeIfHEVCMPEGTS(
+            playlistURL: server.url("/vod.m3u8"), httpHeaders: [:], persistentHTTP1: true)
+        let reader = try XCTUnwrap(made)
+        defer { reader.close() }
+
+        XCTAssertTrue(reader.seek(to: 20)) // segment 3 contains 20 s; the restart is 2, the first encrypted one
+        let done = expectation(description: "drained")
+        let box = StreamBox()
+        Thread.detachNewThread {
+            box.bytes = Self.drain(reader)
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 10)
+        XCTAssertEqual(box.bytes.count, 3 * 188 * 3)
+        XCTAssertEqual(box.bytes.first.map { _ in box.bytes[Self.markerOffset] }, 2)
     }
 
     func testFullBufferLetsTheCurrentSegmentFinishAndHoldsTheNextRequest() async throws {
@@ -368,6 +444,30 @@ final class Issue732PersistentHTTP1Tests: XCTestCase {
         bytes.replaceSubrange(1..<(1 + pmt.count), with: pmt)
         bytes[markerOffset] = marker
         return Data(bytes)
+    }
+
+    private final class StreamBox: @unchecked Sendable {
+        var bytes: [UInt8] = []
+    }
+
+    private static func aes128CBC(_ data: Data, key: Data) -> Data {
+        var out = Data(count: data.count + kCCBlockSizeAES128)
+        var written = 0
+        let iv = Data(count: kCCBlockSizeAES128)
+        let outCapacity = out.count
+        let status = out.withUnsafeMutableBytes { outBytes in
+            data.withUnsafeBytes { inBytes in
+                key.withUnsafeBytes { keyBytes in
+                    iv.withUnsafeBytes { ivBytes in
+                        CCCrypt(CCOperation(kCCEncrypt), CCAlgorithm(kCCAlgorithmAES), CCOptions(kCCOptionPKCS7Padding),
+                                keyBytes.baseAddress, key.count, ivBytes.baseAddress,
+                                inBytes.baseAddress, data.count, outBytes.baseAddress, outCapacity, &written)
+                    }
+                }
+            }
+        }
+        precondition(status == kCCSuccess)
+        return out.prefix(written)
     }
 
     private static func drain(_ reader: HLSVODIngestReader) -> [UInt8] {

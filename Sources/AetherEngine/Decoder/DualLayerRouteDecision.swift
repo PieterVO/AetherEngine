@@ -54,11 +54,7 @@ enum DualLayerRouteDecision: Equatable {
     }
 
     /// Whether the composer is compiled in (the `DualLayerDolbyVision` package trait, off by default).
-    #if DualLayerDolbyVision
-    static let isBuiltIn = true
-    #else
-    static let isBuiltIn = false
-    #endif
+    static let isBuiltIn = AetherEngine.OptionalComponent.dualLayerDolbyVision.isBuiltIn
 
     /// The most pixels per second, base layer plus enhancement layer, the route is willing to decode in
     /// real time: UHD 3840x2160 at 30 fps (248.8 Mpx/s) plus a 1920x1080 enhancement layer at 30 fps

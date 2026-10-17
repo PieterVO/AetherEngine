@@ -751,7 +751,10 @@ if first == "play" {
     }
     // `--dv-pin <spec>`: arm the Dolby Vision pin test (DEBUG builds), same grammar `dvsurvey` prints.
     if let spec = takeStringFlag("--dv-pin", from: &rest) {
-        #if DEBUG
+        #if !DualLayerDolbyVision
+        print("ERROR: --dv-pin needs the DualLayerDolbyVision trait (swift build --traits DualLayerDolbyVision)")
+        exit(64)
+        #elseif DEBUG
         guard AetherEngine.armDolbyVisionPinTest(spec) else {
             print("ERROR: --dv-pin '\(spec)' carries no capture rule (e.g. 'darkest:240,period:2')")
             exit(64)

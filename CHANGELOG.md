@@ -20,6 +20,18 @@ the public-API contract.
   bed as lossy APAC that tvOS sends to an Atmos receiver as Dolby MAT. No behaviour change (#802,
   thanks @aravindhsampath).
 
+### Added
+
+- **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
+  `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /
+  `DTSXObjectAudio` traits; without them it stays nil), the 1 Hz snapshot carries an
+  `ObjectAudioActivity`: the bed it renders into, the objects the presentation declares, how many of
+  them play and how many sit above ear level, and its bed channels on height speakers (DTS:X's standard
+  heights). These are the counts the `bed levels` log line has carried since #731, for a host's stats
+  panel without reading the log; they sit behind a lock of their own, so the sampler never waits for a
+  decode. `aetherctl play` takes `--atmos-bed` as `serve` does and prints them: on a TrueHD Atmos
+  remux, `obj=13/13 up=4 bed=7.1.4`.
+
 ## [7.39.0] - 2026-10-17
 
 **Not built by default any more: TrueHD Atmos and DTS:X object rendering, Profile 7 FEL dual-layer

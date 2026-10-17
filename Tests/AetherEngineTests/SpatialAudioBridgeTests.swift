@@ -640,6 +640,28 @@ struct BedLevelMeterTests {
         #expect(afterSeek.contains("; objects: up to 0 active, 0 elevated;"))
     }
 
+    @Test("the counts reach LiveTelemetry as they stand, with heights carried as bed channels")
+    func activityForTelemetry() {
+        var meter = BedLevelMeter(layout: .l714, sampleRate: 48_000)
+        #expect(meter.activity == ObjectAudioActivity(
+            layout: .l714, objects: 0, activeObjects: 0, elevatedObjects: 0, heightChannels: 0))
+        // DTS:X's standard presentation: its heights are bed channels, not objects.
+        meter.observe(roles: [.bed(.left), .bed(.right), .bed(.topFrontLeft), .bed(.topFrontRight)], updates: [])
+        #expect(meter.activity == ObjectAudioActivity(
+            layout: .l714, objects: 0, activeObjects: 0, elevatedObjects: 0, heightChannels: 2))
+        // TrueHD Atmos: an LFE and objects, one overhead, one at ear level, one muted.
+        meter.observe(roles: [.lfe, .object, .object, .object], updates: [ObjectAudioMetadataUpdate(
+            frameOffset: 0, rampFrames: 0, states: [
+                .init(), .init(position: SIMD3(0.5, 0.5, 1)), .init(position: SIMD3(0.5, 0.5, 0)), .init(gain: 0),
+            ])], configurationChanged: true)
+        #expect(meter.activity == ObjectAudioActivity(
+            layout: .l714, objects: 3, activeObjects: 2, elevatedObjects: 1, heightChannels: 0))
+        // A seek forgets which objects play until the decoder restates them; the configuration stays.
+        _ = meter.restart()
+        #expect(meter.activity.activeObjects == 0)
+        #expect(meter.activity.objects == 3)
+    }
+
     @Test("a configuration without objects does not keep reporting the previous configuration's objects")
     func countsResetOnConfigurationChange() throws {
         var meter = BedLevelMeter(layout: .l714, sampleRate: 48_000)

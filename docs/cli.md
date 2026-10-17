@@ -107,6 +107,7 @@ swift run aetherctl play --live --dvr-window 1800 --audio-stats <url>           
 swift run aetherctl play --live --native-hls <master.m3u8>      # nativeRemoteHLS bypass (carriage watchdog + #293 probe)
 swift run aetherctl play --sidecar de=/tmp/de.srt --subs de <master.m3u8>   # declare a sidecar at load (#316)
 swift run aetherctl play --native-hls --trust-any-certificate <https master.m3u8>  # the AE#495 origin relay
+swift run aetherctl play --atmos-bed 7.1.4 <truehd-atmos.mkv>  # render TrueHD Atmos or DTS:X into a bed as APAC (LoadOptions.objectAudioRendering); the 1 Hz line adds obj=<active>/<declared> up=<overhead> bed=<layout>, and hch=<n> for height channels
 swift run aetherctl play --fel <p7-file.mkv>                    # opt in to the Profile 7 FEL dual-layer route (off by default, like LoadOptions.preferDualLayerDolbyVision; --no-fel / --no-dual-layer are accepted and do nothing)
 swift run aetherctl play --fel --surface --cycle-el 10 <p7-file.mkv>   # flip the residual off and on every 10 s over a visible window (--window is the same flag)
 swift run aetherctl play --fel --surface --dv-pin 'darkest:240,period:2' <url>   # DEBUG: pulse a pinned frame's DV metadata (from dvsurvey)

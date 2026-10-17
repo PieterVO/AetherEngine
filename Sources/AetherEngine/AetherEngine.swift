@@ -7969,6 +7969,7 @@ public final class AetherEngine: ObservableObject {
 
         #if os(iOS) || os(tvOS)
         installRouteRemovalObserver()
+        installChannelCountChangeObserver()
         #endif
 
         #if os(iOS)

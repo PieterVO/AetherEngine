@@ -72,16 +72,61 @@ struct InterruptionPlayGuardTests {
         #expect(!engine.noteAudioInterruptionEnded())
     }
 
-    @Test("setRate during an interruption is held and does not mark a play press")
+    @Test("setRate during an interruption is held: the host keeps its rate, no play press is marked")
     func setRateHeld() throws {
         let engine = try engine()
         defer { engine.stop() }
+        let host = try #require(engine.softwareHost)
         engine.state = .playing
+        let before = host.rate
         engine.noteAudioInterruptionBegan()
         engine.setRate(1.5)
         #expect(engine.desiredRate == 1.5)
+        #expect(host.rate == before, "the speed must not reach the clock while interrupted")
         #expect(!engine.playDeferredByInterruption)
+        engine.noteAudioInterruptionEnded()
+        engine.setRate(1.5)
+        #expect(host.rate == 1.5, "the same call applies once the interruption is over")
+    }
+
+    @Test("setRate(0) cancels a held play")
+    func zeroRateCancels() throws {
+        let engine = try engine()
+        defer { engine.stop() }
+        engine.noteAudioInterruptionBegan()
+        engine.play()
+        engine.setRate(0)
+        #expect(!engine.noteAudioInterruptionEnded())
+    }
+
+    @Test("a second press while one is held goes through, so a stuck interruption cannot trap the transport")
+    func secondPressEscapes() throws {
+        let engine = try engine()
+        defer { engine.stop() }
+        engine.noteAudioInterruptionBegan()
+        engine.play()
+        engine.play()
         #expect(engine.state == .playing)
+        #expect(!engine.audioInterruptionActive)
+    }
+
+    @Test("the end of an interruption: system resume needs the armed intent, a held press always plays, never unseen")
+    func endDecision() {
+        let f = AetherEngine.interruptionEndShouldPlay
+        #expect(f(true, true, false, true))
+        #expect(!f(true, false, false, true), "no shouldResume, no held press: stays paused")
+        #expect(!f(false, true, false, true), "not armed: the user had paused")
+        #expect(f(false, false, true, true), "a held press plays without shouldResume")
+        #expect(!f(true, true, true, false), "background-unsafe never plays")
+    }
+
+    @Test("pause() counts, so an await in the end path can see it")
+    func pauseIsCounted() throws {
+        let engine = try engine()
+        defer { engine.stop() }
+        let before = engine.userPauseCount
+        engine.pause()
+        #expect(engine.userPauseCount == before &+ 1)
     }
 
     @Test("without a renderer path the engine does not hold play")

@@ -5,9 +5,11 @@ import Foundation
 // On the renderer paths (software and audio hosts) the system stops the audio clock itself when an
 // interruption begins, and starts nothing again when it ends: resuming is the app's policy
 // (`shouldResume`). A `play()` or `setRate(>0)` that arrives in between is not neutral, it restarts
-// audio under whatever interrupted the session. AVPlayer does not do that. Its play press during an
-// interruption waits for the interruption to end, so the renderer paths hold the press the same way
-// and run it when the interruption ends. The native AVPlayer path owns this itself and is untouched.
+// audio under whatever interrupted the session. AVPlayer does not start audible playback in that
+// state either, so the renderer paths hold the press and run it when the interruption ends (the
+// press is the user's explicit request, so it runs whether or not the system grants `shouldResume`).
+// A second press while one is already held goes through, so a BEGAN that never got its ENDED cannot
+// make the transport unplayable. The native AVPlayer path owns this itself and is untouched.
 extension AetherEngine {
 
     /// Pure decision: whether a play press is held back. Only a renderer path while interrupted.
@@ -22,9 +24,23 @@ extension AetherEngine {
         guard Self.interruptionHoldsTransport(
             interrupted: audioInterruptionActive, rendererPath: softwareHost != nil || audioHost != nil
         ) else { return false }
+        if playDeferredByInterruption {
+            audioInterruptionActive = false
+            playDeferredByInterruption = false
+            EngineLog.emit("[AetherEngine] play() pressed again during an interruption: letting it through", category: .engine)
+            return false
+        }
         playDeferredByInterruption = true
         EngineLog.emit("[AetherEngine] play() held: an audio interruption is active; it runs when the interruption ends", category: .engine)
         return true
+    }
+
+    /// Pure: whether the end of an interruption plays. The system-granted resume needs the armed
+    /// intent; a held press plays regardless. Never in a state that must not start unseen.
+    nonisolated static func interruptionEndShouldPlay(
+        armed: Bool, shouldResume: Bool, deferredPlay: Bool, backgroundSafe: Bool
+    ) -> Bool {
+        ((armed && shouldResume) || deferredPlay) && backgroundSafe
     }
 
     func noteAudioInterruptionBegan() {

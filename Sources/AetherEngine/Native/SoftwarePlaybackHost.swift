@@ -1264,11 +1264,23 @@ final class SoftwarePlaybackHost {
         // Reset the live feeder state for the new session.
         resetFeederState()
 
+        // The session zero a cold load predicts from the source's origin, the way a resume derives it.
+        // Set for every non-live source, not only a resume: a seek or a scrub still before the first play
+        // converts with it, and the demux loop only resolves the real zero when it first arms the clock
+        // (a pre-play seek arms the clock itself, so the loop never would). Reported, so the engine's
+        // chapter axis, harvest anchors and stills all read the same zero.
+        if !isLive {
+            let predictedZero = SWClockAnchorPolicy.resumeSessionZero(sourceOriginSeconds: dem.resolvedSourceStartOrigin)
+            if predictedZero != clockSessionZero {
+                clockSessionZero = predictedZero
+                onClockSessionZero?(predictedZero)
+            }
+        }
+
         if let start = startPosition, start.isFinite, start > 0 {
             // AE#724: the anchor is a session-axis position; on an offset-origin source it is carried
             // over before it reaches the demuxer, the skip threshold and the clock, as a seek's is.
-            let zero = SWClockAnchorPolicy.resumeSessionZero(sourceOriginSeconds: dem.resolvedSourceStartOrigin)
-            clockSessionZero = zero
+            let zero = clockSessionZero
             let sourceStart = SWClockAnchorPolicy.sourceSeconds(forSession: start, sessionZeroSeconds: zero)
             // #254: same off-main, deadline-bounded reposition the transport seek uses. A resume into a
             // remote source that has to scan for its landing would otherwise block the main thread here.
@@ -1699,18 +1711,6 @@ final class SoftwarePlaybackHost {
         // already makes with `sessionStartPts`. For a zero-based source the two
         // axes coincide and this is the identity, which is why the omission only
         // ever showed on a mid-stream-joined one.
-        //
-        // A seek before the clock is armed (a cold load that has not played yet) has no session zero
-        // either: the demux loop only resolves it when it first arms the clock, and this seek arms the
-        // clock itself, so the loop never would. Derive it the way a resume does, from the source's
-        // origin, and report it, so a pre-play seek lands on the same content as one after play().
-        if !isLive, !clockArmed {
-            let zero = SWClockAnchorPolicy.resumeSessionZero(sourceOriginSeconds: dem.resolvedSourceStartOrigin)
-            if zero != clockSessionZero {
-                clockSessionZero = zero
-                onClockSessionZero?(zero)
-            }
-        }
         let sourceSeconds = SWClockAnchorPolicy.sourceSeconds(
             forSession: seconds,
             sessionZeroSeconds: clockSessionZero

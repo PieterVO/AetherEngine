@@ -206,7 +206,10 @@ struct ContainerChapterEngineWiringTests {
 ///
 /// The software half asserts `sourceTime`, the raw container time the clock really reached. On the
 /// software host a seek publishes its own target as `currentTime`, so that value alone passes even when
-/// the content landed early.
+/// the content landed early. It runs two passes on separate loads: seek before the first play(), where
+/// the host predicts the session zero at load, and play first, where the demux loop resolves it. After
+/// each seek `sourceTime` is read once, about 0.35 s later, inside a tight window. The native half checks
+/// `sourceTime` as well as `currentTime`.
 @Suite("Container chapter seek lands on the chapter (media)", .serialized, .timeLimit(.minutes(3)))
 @MainActor
 struct ContainerChapterSeekMediaTests {
@@ -233,25 +236,53 @@ struct ContainerChapterSeekMediaTests {
         return reading(engine)
     }
 
-    private func checkEveryChapterLands(url: URL, software: Bool, expectedStarts: [Double],
-                                        expectedSourceTimes: [Double]) async throws {
+    /// Loads `url` paused and waits for the session to be ready. Native: the item must be ready before
+    /// it takes a seek, or the seek is deferred and superseded.
+    private func loadReady(_ url: URL, software: Bool) async throws -> AetherEngine {
         let engine = try AetherEngine()
         var options = LoadOptions()
         options.suppressDisplayCriteria = true
         options.preferredDecodePath = software ? .software : .automatic
         options.autoplay = false
         try await engine.load(url: url, options: options)
-        defer { engine.stop() }
-
-        // Native: the item must be ready before it takes a seek, or the seek is deferred and superseded.
         let ready = try await waitUntil(timeout: .seconds(20)) { engine.isSessionReady }
         #expect(ready, "software=\(software) session ready")
+        return engine
+    }
 
-        let chapters = engine.mediaChapters
-        #expect(chapters.map(\.startSeconds) == expectedStarts, "published chapter starts")
+    /// Seeks to every chapter and reads `sourceTime` once, shortly after the seek returns. The window
+    /// is tight on purpose: a clock that runs forward would pass a wide one from an early landing, or
+    /// from a seek that did nothing.
+    private func checkLandings(_ engine: AetherEngine, _ chapters: [ChapterInfo], _ sourceTimes: [Double],
+                               phase: String) async throws {
+        for (chapter, source) in zip(chapters, sourceTimes) {
+            await engine.seek(to: chapter.startSeconds)
+            try await Task.sleep(for: .milliseconds(350))
+            let landed = engine.sourceTime
+            #expect(landed >= source - 0.1 && landed < source + 0.6,
+                    "\(phase): chapter \(chapter.id) @ \(chapter.startSeconds) sourceTime \(landed), want [\(source - 0.1), \(source + 0.6))")
+        }
+    }
 
+    private func checkEveryChapterLands(url: URL, software: Bool, expectedStarts: [Double],
+                                        expectedSourceTimes: [Double]) async throws {
         if software {
-            // Before play(): the clock is not armed yet, the case a cold seek has to convert on its own.
+            // Pass 1: seek before the first play(). The clock is not armed yet, so the seek has to
+            // convert on the zero the host predicted at load, and the demux loop never resolves its own.
+            let engine = try await loadReady(url, software: true)
+            defer { engine.stop() }
+            let chapters = engine.mediaChapters
+            #expect(chapters.map(\.startSeconds) == expectedStarts, "published chapter starts")
+
+            // The session zero exists from load on, for every consumer that converts before the first
+            // play: the subtitle-harvest anchor, the scrub stills, the resident ranges.
+            let originShift = expectedSourceTimes[0] - expectedStarts[0]
+            #expect((engine.softwareClockSessionZero ?? 0) == (originShift > 2 ? originShift : 0),
+                    "session zero reported at load")
+            let converted = try #require(engine.softwareHost).sourceSeconds(forSession: 4)
+            #expect(abs(converted - (4 + originShift)) < 0.001,
+                    "session 4 s converts to \(converted) s before play, want \(4 + originShift)")
+
             for (chapter, source) in zip(chapters, expectedSourceTimes) {
                 let landed = try await seekAndSettle(engine, to: chapter.startSeconds, expecting: source) {
                     $0.sourceTime
@@ -259,25 +290,32 @@ struct ContainerChapterSeekMediaTests {
                 #expect(abs(landed - source) < 0.1,
                         "before play: chapter \(chapter.id) @ \(chapter.startSeconds) sourceTime \(landed), want \(source)")
             }
-            // After play(): the clock is armed, the normal path.
+            // Then play() on the armed clock and seek again.
             engine.play()
             let playing = try await waitUntil(timeout: .seconds(10)) { engine.state == .playing }
             #expect(playing, "software play() reached .playing")
-            for (chapter, source) in zip(chapters, expectedSourceTimes) {
-                await engine.seek(to: chapter.startSeconds)
-                // The clock runs on from the landing, so accept a short window past the chapter start.
-                let landed = try await waitUntil(timeout: .seconds(4)) {
-                    let t = engine.sourceTime
-                    return t >= source - 0.1 && t < source + 2
-                }
-                #expect(landed, "after play: chapter \(chapter.id) @ \(chapter.startSeconds) sourceTime \(engine.sourceTime), want \(source)")
+            try await checkLandings(engine, chapters, expectedSourceTimes, phase: "after pre-play seeks and play")
+
+            // Pass 2: play first on a fresh load, so the demux loop resolves the zero when it arms
+            // the clock, then seek. This is the path where the loop, not the host, sets the zero.
+            let playFirst = try await loadReady(url, software: true)
+            defer { playFirst.stop() }
+            playFirst.play()
+            let started = try await waitUntil(timeout: .seconds(10)) {
+                playFirst.state == .playing && playFirst.sourceTime > expectedSourceTimes[0] + 0.1
             }
+            #expect(started, "play-first: reached .playing past the origin, sourceTime \(playFirst.sourceTime)")
+            try await checkLandings(playFirst, playFirst.mediaChapters, expectedSourceTimes, phase: "play first")
         } else {
-            for chapter in chapters {
+            let engine = try await loadReady(url, software: false)
+            defer { engine.stop() }
+            for (chapter, source) in zip(engine.mediaChapters, expectedSourceTimes) {
                 let landed = try await seekAndSettle(engine, to: chapter.startSeconds,
                                                      expecting: chapter.startSeconds) { $0.currentTime }
                 #expect(abs(landed - chapter.startSeconds) < 0.1,
                         "native chapter \(chapter.id) @ \(chapter.startSeconds) landed at \(landed)")
+                let reached = try await waitUntil(timeout: .seconds(4)) { abs(engine.sourceTime - source) <= 0.1 }
+                #expect(reached, "native chapter \(chapter.id) sourceTime \(engine.sourceTime), want \(source)")
             }
         }
     }

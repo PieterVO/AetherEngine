@@ -377,6 +377,7 @@ Sources/AetherEngine/
 ├── AetherEngine+Probe.swift Static probe machinery: probe(url:/source:), shared HDR10+/Atmos detail orchestration, swDecodeProbe, format / frame-rate / codec-label detection
 ├── ProbeControl.swift Opt-in whole-probe input/packet/deadline accounting and caller cancellation; native callbacks retain their control until synchronous work returns
 ├── AetherEngine+Loading.swift               The per-backend loaders (remote-HLS, native, software, audio, audio-native) + reload
+├── AetherEngine+OptionalComponents.swift   `AetherEngine.OptionalComponent`: which trait-gated components (object audio, dual-layer DV, DV still reshaping) this build carries
 ├── AetherEngine+Subtitles.swift             Embedded + external subtitle pipeline (packet-store drainer, cue apply / prune, `closeOpenEndedCues` taking a placeholder end from the next stored packet, or retiring it at the reconstruction window when the store has none, external track registry + unified selection routing, #88). Every embedded stream is tapped off the session demuxer into `SubtitlePacketStore`; a playhead-paced drainer decodes the selected stream (both channels, text and bitmap, VOD and live) into the overlay, riding producer seeks/restarts by construction, which replaced the side-demuxer reader and its recovery machinery outright (#112 rework); a VOD-only forward prefetcher extends store coverage past the producer park to the 60 s drain lead for host advance sync offsets (#151), plus a margin so the harvest leads the decode and the set at the window's edge can take its authored end from the store (#362); side readers yield the source link to the video path while it is fetching or seeking (#240, `SideReaderLinkPolicy`); the drain tick states how far display-state determination has advanced on the absolute source axis, fenced by load + seek generation, so a host or conformance harness can tell "determined, and empty" from "not read yet" (#250, `AetherEngine+SubtitleResolution.swift`)
 ├── AetherEngine+ClosedCaptions.swift        In-band CEA-608 closed captions + A53/SEI extraction: ClosedCaptionTap (read-only producer observer) + cue mirroring (#77, #131)
 ├── AetherEngine+Live.swift                  Live window publishing, edge snap, resume clamp, scrub thumbnails
@@ -429,7 +430,7 @@ Sources/AetherEngine/
 │   ├── A53SEIParser.swift                   A53/GA94 cc_data extraction from H.264/HEVC SEI NALs (#131)
 │   ├── DualLayerPictureAlignment.swift      SW FEL path (`DualLayerDolbyVision` trait): pairs each EL picture with the base picture of the same display slot (POC), falling back to access-unit pairing (#702)
 │   ├── FrameSideDataRing.swift              SW FEL path (`DualLayerDolbyVision` trait): fixed ring of per-frame RPU parameters and display metadata keyed by timestamp (#702)
-│   ├── OrderedDelivery.swift                SW FEL path (not routed yet): hands composed frames from the Metal completion queue to the renderer in decode order, with an epoch for seeks and a stall guard (#702)
+│   ├── OrderedDelivery.swift                SW FEL path (`DualLayerDolbyVision` trait): hands composed frames from the Metal completion queue to the renderer in decode order, with an epoch for seeks and a stall guard (#702)
 │   ├── CCDataParser.swift                   Parses the bare cc_data triplet stream from a demuxable CEA-608 caption track (#77)
 │   ├── CEA608Decoder.swift                  In-house CEA-608 line-21 decoder (field-1 / CC1), validated against FFmpeg ccaption_dec.c (#77)
 │   ├── DeinterlaceFilter.swift              SW path: persistent bwdif / yadif libavfilter graph, engages on the first interlaced frame
@@ -489,7 +490,7 @@ Sources/AetherEngine/
 │   └── FrameRateSnap.swift                  Snap to standard rates (23.976, 24, 25, 29.97, 30, 50, 59.94, 60)
 ├── FrameExtractor/
 │   ├── AetherEngine+FrameExtractor.swift    makeFrameExtractor() convenience for the currently loaded URL
-│   ├── DolbyVisionStillConverter.swift      Applies the RPU-carried DV colour transform to a DV P5 / P10.0 base-layer frame (IPT-PQ-C2, not YCbCr) so scrub stills lose the green + magenta cast (#103)
+│   ├── DolbyVisionStillConverter.swift      `DolbyVisionStillReshaping` trait. Applies the RPU-carried DV colour transform to a DV P5 / P10.0 base-layer frame (IPT-PQ-C2, not YCbCr) so scrub stills lose the green + magenta cast (#103)
 │   ├── FrameExtractor.swift                 Off-playback still extraction actor: serial decode queue, cancel-supersede, idle-close
 │   ├── FrameDecodeContext.swift             Isolated FFmpeg demux + decode + sws_scale → CGImage (thumbnail / snapshot)
 │   ├── FrameCache.swift                     Bounded LRU: mode-isolated stores, second-bucketed thumbnails
@@ -567,11 +568,11 @@ Sources/AetherEngine/
 │   ├── DoviRpuConverter.swift               libdovi RPU surgery for both routes. Native path: per-packet Profile 7 → 8.1 rewrite (convert type-62 RPU, drop type-63 EL). SW FEL path: `separateDualLayers` also lifts the EL into its own packet and returns the composer's reshaping parameters plus the 8.1 RPU attached as display metadata
 │   ├── DoviRpuConverter+Probe.swift         Diagnostic DV-conversion probe (`doviConvertProbe` / `DoviConvertProbeResult`), backs `aetherctl dovitest`
 │   ├── HEVCPictureOrderCount.swift          H.265 picture order count (8.3.1) of one layer from parameter sets and first slice headers, no decoding; nil for anything it cannot follow (#702)
-│   ├── DoviDisplayMetadata.swift            SW FEL path: sets `DolbyVisionRPUData` (the Profile 8.1 RPU minus its NAL header) and `DolbyCompatibilityID` (the CFString "1", never a number) on every emitted buffer, or clears both; tvOS consumes them in backboardd
-│   ├── DoviDisplayMetadataDebug.swift       DEBUG-only pin test: substitutes a captured RPU on a duty cycle, the on-device consumption test
+│   ├── DoviDisplayMetadata.swift            SW FEL path (`DualLayerDolbyVision` trait): sets `DolbyVisionRPUData` (the Profile 8.1 RPU minus its NAL header) and `DolbyCompatibilityID` (the CFString "1", never a number) on every emitted buffer, or clears both; tvOS consumes them in backboardd
+│   ├── DoviDisplayMetadataDebug.swift       DEBUG-only pin test (`DualLayerDolbyVision` trait): substitutes a captured RPU on a duty cycle, the on-device consumption test
 │   ├── DoviRpuSurvey.swift                  L1 / L2 display-metadata survey over a title's RPUs (no decode, no GPU); backs `aetherctl dvsurvey`
 │   ├── AetherEngine+FelProbe.swift          `DualLayerDolbyVision` trait: FEL decode probe backing `aetherctl feltest`, and the `--cycle-el` residual switch
-│   ├── AetherEngine+DolbyVisionTest.swift   DEBUG-only `@_spi(Diagnostics)` hook (not host API) that arms the pin test from a debug menu or `aetherctl play --dv-pin`
+│   ├── AetherEngine+DolbyVisionTest.swift   DEBUG-only, `DualLayerDolbyVision` trait: `@_spi(Diagnostics)` hook (not host API) that arms the pin test from a debug menu or `aetherctl play --dv-pin`
 │   ├── Metal/                               `DualLayerDolbyVision` trait only
 │   │   ├── DoviFelComposer.swift            BL + EL + RPU composition: runtime-compiled pipelines, pooled P010 output, `composeAsync` bounded at `maxFramesInFlight` with completions on its own serial queue; RPU → `DoviMetalParams` parsing
 │   │   ├── DoviShaderSource.swift           Luma / chroma compose kernels (reshaping, inverse NLQ, bilinear EL upsampling, ordered dither) and the ABI layout probe, compiled at runtime

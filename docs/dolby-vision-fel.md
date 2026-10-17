@@ -8,8 +8,9 @@ memory while staying correct.
 package trait, which is off by default ([README › Optional components](../README.md#optional-components)).
 Built without it, `preferDualLayerDolbyVision` is accepted and changes nothing: the route decision
 reports `not taken (built without the DualLayerDolbyVision trait)` and every Profile 7 source takes the
-native route. Everything below describes a build with the trait; `aetherctl play --fel`, `--cycle-el` and
-`aetherctl feltest` need it too.
+native route. Everything below describes a build with the trait; `aetherctl play --fel`, `--cycle-el`,
+`--dv-pin`, `aetherctl feltest` and the DEBUG pin test (`armDolbyVisionPinTest`) need it too, and the
+pulse probe links the engine with it through `Probes/DolbyVisionPulse/Device/PulseEngine`.
 
 **Platforms.** Nothing in the route or the composer is tvOS-specific: the two VideoToolbox decoders and
 the Metal kernels are the same on iOS, iPadOS and macOS, the route has no platform gate, and
@@ -263,7 +264,7 @@ passes it into `VideoRoutingPolicy`:
 | Source | `dolbyVisionHandling` | `preferDualLayerDolbyVision` | Device | Route |
 |---|---|---|---|---|
 | P7, `el_type` FEL | `.automatic` | true (opt-in; the default is false) | VideoToolbox HEVC hardware + Metal | software host, `DualLayerVideoDecoder` |
-| P7, `el_type` FEL | `.automatic` | false (the default), a build without the `DualLayerDolbyVision` trait, or no VideoToolbox HEVC hardware decode | — | native (8.1 conversion where the display takes Dolby Vision, otherwise the HDR10 base layer) |
+| P7, `el_type` FEL | `.automatic` | false (the default), a build without the `DualLayerDolbyVision` trait, or no VideoToolbox HEVC hardware decode | any | native (8.1 conversion where the display takes Dolby Vision, otherwise the HDR10 base layer) |
 | P7, `el_type` MEL | `.automatic` | any | — | native (as above; the conversion loses nothing for MEL) |
 | P7, any | `.baseLayerOnly` | any | — | HDR10 base layer |
 

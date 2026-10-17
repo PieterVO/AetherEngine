@@ -656,26 +656,27 @@ The 7.x line raised the floor from iOS 16, tvOS 17 and macOS 14. A project that 
 
 ### Optional components
 
-Three components are compiled only when a host asks for them, each behind a package trait that is **off by default**:
+Four components are compiled only when a host asks for them, each behind a package trait that is **off by default**:
 
 | Trait | Compiles and links | Without it |
 | --- | --- | --- |
 | `TrueHDObjectAudio` | [LibTrueHD](https://github.com/superuser404notfound/LibTrueHD) and the object renderer | TrueHD Atmos keeps the channel bridge whatever `objectAudioRendering` asks |
 | `DTSXObjectAudio` | [LibDTSX](https://github.com/superuser404notfound/LibDTSX) and the object renderer | DTS:X keeps the channel bridge whatever `objectAudioRendering` asks |
-| `DualLayerDolbyVision` | the Profile 7 FEL dual-layer composer (`DualLayerVideoDecoder` and its Metal composer) | a Profile 7 source keeps the native route whatever `preferDualLayerDolbyVision` asks |
+| `DualLayerDolbyVision` | the Profile 7 FEL dual-layer composer (`DualLayerVideoDecoder`, its Metal composer and the per-frame display metadata) | a Profile 7 source keeps the native route whatever `preferDualLayerDolbyVision` asks |
+| `DolbyVisionStillReshaping` | the reshaping that turns a Dolby Vision Profile 5 / AV1 Profile 10.0 frame into a still | such a source has no scrub stills, I-frame stills or held picture (`supportsCacheBackedStills` is false); playback is unaffected |
 
-Without its trait a component is not in the binary: its code is not compiled, and a library behind it is neither linked nor resolved (it drops out of the host's `Package.resolved`). The options that ask for it stay in the API, so a host compiles the same either way; they change nothing, and the session log says why (`TrueHD Atmos rendering requested but not built in (TrueHDObjectAudio trait off)`, `DV P7 dual-layer route: not taken (built without the DualLayerDolbyVision trait)`).
+Without its trait a component is not in the binary: its code is not compiled, and a library behind it is neither linked nor resolved (it drops out of the host's `Package.resolved`). The options that ask for it stay in the API, so a host compiles the same either way; they change nothing, and the session log says why (`TrueHD Atmos rendering requested but not built in (TrueHDObjectAudio trait off)`, `DV P7 dual-layer route: not taken (built without the DualLayerDolbyVision trait)`). A host that wants to hide a setting its build cannot honour asks `AetherEngine.OptionalComponent`, for example `AetherEngine.OptionalComponent.dualLayerDolbyVision.isBuiltIn`.
 
 These components may be subject to third-party patent licensing. Integrators who enable them are responsible for their own licensing.
 
 To enable them, list the traits on the package dependency:
 
 ```swift
-.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.38.1",
-         traits: ["TrueHDObjectAudio", "DTSXObjectAudio", "DualLayerDolbyVision"])
+.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.39.0",
+         traits: ["TrueHDObjectAudio", "DTSXObjectAudio", "DualLayerDolbyVision", "DolbyVisionStillReshaping"])
 ```
 
-In an Xcode project, the package's traits are set where the package dependency is listed (XcodeGen: `traits: [...]` on the package). The engine itself builds with them through `swift build --traits TrueHDObjectAudio,DTSXObjectAudio,DualLayerDolbyVision` (or `--enable-all-traits`); CI builds and tests both the default and the all-traits configuration.
+In an Xcode project, a remote package's traits are set in the package dependency editor (Project › Package Dependencies), and Xcode stores them in the `.pbxproj`. XcodeGen cannot express them yet (2.45.4 drops a `traits:` key on a package without a word), so an XcodeGen project either patches the generated `.pbxproj` after each generate, or depends on a small local package that depends on AetherEngine with the traits set and re-exports it (`@_exported import AetherEngine`). [Probes/AllTraits](Probes/AllTraits/Package.swift) is that package with every trait on, and `Probes/DolbyVisionPulse/Device/PulseEngine` one with `DualLayerDolbyVision` alone. The engine itself builds with them through `swift build --traits TrueHDObjectAudio,DTSXObjectAudio,DualLayerDolbyVision,DolbyVisionStillReshaping` (or `--enable-all-traits`); CI builds and tests both the default and the all-traits configuration, and builds the all-traits engine for tvOS and iOS through `Probes/AllTraits`.
 
 ## Support
 

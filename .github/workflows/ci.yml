@@ -25,7 +25,7 @@ jobs:
   test-macos:
     name: swift test (macOS)
     runs-on: xcode-27
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -36,10 +36,6 @@ jobs:
 
       - name: swift build
         run: swift build
-
-      # The object-audio decoder libraries are traits a host can turn off; keep that build compiling.
-      - name: swift build (traits off)
-        run: swift build --disable-default-traits --build-tests --scratch-path .build-notraits
 
       # A test process that dies mid-run reads as exit 1 with no ✘, no backtrace and no swift-testing
       # summary: `swift test` collapses every abnormal child exit to a plain 1, and a signal takes the
@@ -58,6 +54,16 @@ jobs:
         env:
           LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
         run: swift test --skip-build --disable-xctest
+
+      # The optional components (TrueHDObjectAudio, DTSXObjectAudio, DualLayerDolbyVision) are off by
+      # default, so every step above builds and tests without them. This build and run keep the opt-in
+      # code compiling and its tests running. Steps in this job rather than a job of their own, to stay
+      # within the account's concurrent macOS runners.
+      - name: swift build (all traits)
+        run: swift build --enable-all-traits --build-tests --scratch-path .build-alltraits
+
+      - name: swift test (all traits)
+        run: swift test --enable-all-traits --skip-build --scratch-path .build-alltraits
 
       - name: Software VOD packet-cache regressions
         run: |

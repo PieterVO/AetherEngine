@@ -1,3 +1,5 @@
+// Only with the TrueHDObjectAudio or DTSXObjectAudio trait (both off by default).
+#if TrueHDObjectAudio || DTSXObjectAudio
 import Foundation
 import CoreMedia
 import AetherLibavcodec
@@ -511,3 +513,4 @@ final class SpatialAudioBridge: AudioTranscodingBridge, @unchecked Sendable {
         }
     }
 }
+#endif

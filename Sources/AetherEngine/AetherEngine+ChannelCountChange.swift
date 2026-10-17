@@ -14,7 +14,7 @@ import Foundation
 // PCM layout the engine decoded and the system adapts it to the route (the sources this matters to
 // are forward-only and cannot be re-fed, the same reason the automatic-flush handler leaves a gap
 // rather than rewinding). The renderer's own output-configuration notification is deprecated in
-// favour of the enqueue result and is not used.
+// favour of the enqueue result and is not used (SDK availability annotation).
 // iOS and tvOS only: macOS has no audio session to carry a channel preference.
 
 /// Pure: the channel count a renderer path asks the session for.
@@ -24,26 +24,16 @@ nonisolated func preferredOutputChannels(sourceChannels: Int?, maxOutput: Int) -
 
 extension AetherEngine {
 
-    /// Whether the written preference no longer matches what the route can do.
-    nonisolated static func channelPreferenceNeedsRefresh(preferredNow: Int, sourceChannels: Int?, maxOutput: Int) -> Bool {
-        preferredNow != preferredOutputChannels(sourceChannels: sourceChannels, maxOutput: maxOutput)
+    /// Pure: the value to write, or nil when the session already holds it. The compare runs where
+    /// the write does (on the session queue, against freshly read values), so a burst of route
+    /// notifications, or the one a write may itself trigger, ends at the first no-op.
+    nonisolated static func channelPreferenceTarget(preferredNow: Int, sourceChannels: Int?, maxOutput: Int) -> Int? {
+        let wanted = preferredOutputChannels(sourceChannels: sourceChannels, maxOutput: maxOutput)
+        return wanted == preferredNow ? nil : wanted
     }
 
-    /// The reaction, with the session reads and the write injected so it runs without a session.
-    /// Only a renderer path owns its channel preference. Returns whether a new value was written.
-    @discardableResult
-    func refreshChannelPreference(
-        sourceChannels: Int?, maxOutput: Int, preferredNow: Int, apply: (Int) -> Void
-    ) -> Bool {
-        guard softwareHost != nil || audioHost != nil else { return false }
-        guard Self.channelPreferenceNeedsRefresh(preferredNow: preferredNow, sourceChannels: sourceChannels, maxOutput: maxOutput) else {
-            return false
-        }
-        let wanted = preferredOutputChannels(sourceChannels: sourceChannels, maxOutput: maxOutput)
-        EngineLog.emit("[AetherEngine] route change: channel preference \(preferredNow) -> \(wanted) (source=\(sourceChannels?.formatted() ?? "unknown") max=\(maxOutput))", category: .engine)
-        apply(wanted)
-        return true
-    }
+    /// Only a renderer path owns its channel preference; the native path leaves it to AVKit.
+    var ownsChannelPreference: Bool { softwareHost != nil || audioHost != nil }
 
     #if os(iOS) || os(tvOS)
     func installChannelCountChangeObserver() {
@@ -52,17 +42,20 @@ extension AetherEngine {
             object: AVAudioSession.sharedInstance(), queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
-                let session = AVAudioSession.sharedInstance()
-                let sources = SharedOutputCoordinator.shared.preferredSourceChannels
-                self.refreshChannelPreference(
-                    sourceChannels: sources,
-                    maxOutput: session.maximumOutputNumberOfChannels,
-                    preferredNow: session.preferredOutputNumberOfChannels
-                ) { wanted in
-                    _ = self.enqueueAudioSessionTransition {
-                        try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(wanted)
-                    }
+                guard let self, self.ownsChannelPreference else { return }
+                // Same source the activation path resolves: the engines' coordinated maximum, else this
+                // engine's own track, so a stereo title is never presented to the route as 8 channels.
+                let sources = SharedOutputCoordinator.shared.preferredSourceChannels ?? self.ownSourceChannels()
+                _ = self.enqueueAudioSessionTransition {
+                    // Off the main actor (AE#538): the reads, the compare and the write are one step.
+                    let session = AVAudioSession.sharedInstance()
+                    guard let wanted = AetherEngine.channelPreferenceTarget(
+                        preferredNow: session.preferredOutputNumberOfChannels,
+                        sourceChannels: sources, maxOutput: session.maximumOutputNumberOfChannels
+                    ) else { return }
+                    do { try session.setPreferredOutputNumberOfChannels(wanted) }
+                    catch { EngineLog.emit("[AetherEngine] route change: channel preference write failed: \(error)", category: .engine) }
+                    EngineLog.emit("[AetherEngine] route change: channel preference -> \(wanted) (source=\(sources?.formatted() ?? "unknown") max=\(session.maximumOutputNumberOfChannels) output=\(session.outputNumberOfChannels))", category: .engine)
                 }
             }
         }

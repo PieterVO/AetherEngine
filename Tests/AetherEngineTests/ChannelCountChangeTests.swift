@@ -21,42 +21,42 @@ struct ChannelCountChangeTests {
         #expect(preferredOutputChannels(sourceChannels: nil, maxOutput: 6) == 6)
     }
 
-    @Test("a 7.1 receiver switching to 2.0 speakers lowers the preference")
-    func routeDropsToStereo() throws {
-        let engine = try engine()
-        defer { engine.stop() }
-        var written: [Int] = []
-        let applied = engine.refreshChannelPreference(sourceChannels: 8, maxOutput: 2, preferredNow: 8) { written.append($0) }
-        #expect(applied)
-        #expect(written == [2])
+    @Test("a 7.1 receiver switching to 2.0 speakers lowers the preference, and back")
+    func routeFlips() {
+        #expect(AetherEngine.channelPreferenceTarget(preferredNow: 8, sourceChannels: 8, maxOutput: 2) == 2)
+        #expect(AetherEngine.channelPreferenceTarget(preferredNow: 2, sourceChannels: 8, maxOutput: 8) == 8)
     }
 
-    @Test("and raises it again when the receiver returns")
-    func routeReturnsToSurround() throws {
-        let engine = try engine()
-        defer { engine.stop() }
-        var written: [Int] = []
-        engine.refreshChannelPreference(sourceChannels: 8, maxOutput: 8, preferredNow: 2) { written.append($0) }
-        #expect(written == [8])
+    @Test("an unchanged preference is not rewritten, so a repeated notification ends at the first no-op")
+    func repeatedNotificationsAreNoOps() {
+        var preferred = 8
+        var writes = 0
+        for _ in 0..<5 {
+            if let wanted = AetherEngine.channelPreferenceTarget(preferredNow: preferred, sourceChannels: 8, maxOutput: 2) {
+                preferred = wanted
+                writes += 1
+            }
+        }
+        #expect(writes == 1)
     }
 
-    @Test("an unchanged preference is not rewritten")
-    func unchangedIsLeftAlone() throws {
-        let engine = try engine()
-        defer { engine.stop() }
-        var written: [Int] = []
-        let applied = engine.refreshChannelPreference(sourceChannels: 6, maxOutput: 8, preferredNow: 6) { written.append($0) }
-        #expect(!applied)
-        #expect(written.isEmpty)
+    @Test("a stereo source is never presented as 8 channels, even on a 7.1 route")
+    func stereoSourceStaysStereo() {
+        #expect(AetherEngine.channelPreferenceTarget(preferredNow: 2, sourceChannels: 2, maxOutput: 8) == nil)
     }
 
-    @Test("the native path owns its own channels and is left alone")
-    func nativeUntouched() throws {
-        let engine = try engine(software: false)
-        defer { engine.stop() }
-        var written: [Int] = []
-        let applied = engine.refreshChannelPreference(sourceChannels: 8, maxOutput: 2, preferredNow: 8) { written.append($0) }
-        #expect(!applied)
-        #expect(written.isEmpty)
+    @Test("an unknown source follows the route maximum, as activation does")
+    func unknownSource() {
+        #expect(AetherEngine.channelPreferenceTarget(preferredNow: 2, sourceChannels: nil, maxOutput: 6) == 6)
+    }
+
+    @Test("only renderer paths own the preference")
+    func ownership() throws {
+        let native = try AetherEngine()
+        defer { native.stop() }
+        #expect(!native.ownsChannelPreference)
+        let sw = try engine()
+        defer { sw.stop() }
+        #expect(sw.ownsChannelPreference)
     }
 }

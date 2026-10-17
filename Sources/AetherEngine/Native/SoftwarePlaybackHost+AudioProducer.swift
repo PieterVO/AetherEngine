@@ -125,6 +125,7 @@ extension SoftwarePlaybackHost {
         return result
     }
 
+#if TrueHDObjectAudio || DTSXObjectAudio
     @available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
     private func makeAPACProducer(
         demuxer dem: Demuxer, stream: UnsafeMutablePointer<AVStream>, streamIndex: Int32,
@@ -181,4 +182,15 @@ extension SoftwarePlaybackHost {
             return nil
         }
     }
+
+#else
+    @available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
+    private func makeAPACProducer(
+        demuxer dem: Demuxer, stream: UnsafeMutablePointer<AVStream>, streamIndex: Int32,
+        layout: SpatialSpeakerLayout
+    ) async -> (any SoftwareAudioProducing)? {
+        EngineLog.emit("[SWHost] audio: built without an object-audio trait; PCM decode", category: .swPlayback)
+        return nil
+    }
+#endif
 }

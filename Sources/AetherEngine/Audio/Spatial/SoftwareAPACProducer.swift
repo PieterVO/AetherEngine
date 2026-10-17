@@ -1,3 +1,5 @@
+// Only with the TrueHDObjectAudio or DTSXObjectAudio trait (both off by default): it renders on a SpatialAudioBridge.
+#if TrueHDObjectAudio || DTSXObjectAudio
 import Foundation
 import CoreMedia
 import AudioToolbox
@@ -117,3 +119,4 @@ final class SoftwareAPACProducer: SoftwareAudioProducing, @unchecked Sendable {
         return tap?.decode(packet: packet) ?? []
     }
 }
+#endif

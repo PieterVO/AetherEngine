@@ -56,6 +56,7 @@ struct SoftwareAPACFormatDescriptionTests {
         }
     }
 
+    #if TrueHDObjectAudio || DTSXObjectAudio
     @Test("packets decode from the sample buffer's own format description")
     func packetsDecodeFromTheirOwnDescription() throws {
         guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *) else { return }
@@ -135,4 +136,5 @@ struct SoftwareAPACFormatDescriptionTests {
         #expect(failure == noErr, "decode failed with \(failure)")
         #expect(decodedFrames > 0)
     }
+    #endif
 }

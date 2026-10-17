@@ -1009,6 +1009,10 @@ public final class AetherEngine: ObservableObject {
     /// on interruption end (see the observer in setupLifecycleObservers). Disarmed by user pause()
     /// and stopInternal().
     private var resumeAfterInterruption = false
+    /// True between an audio-session interruption's BEGAN and ENDED. See `AetherEngine+InterruptionGuard.swift`.
+    var audioInterruptionActive = false
+    /// A `play()` pressed while an interruption was active on a renderer path, held until it ends.
+    var playDeferredByInterruption = false
 
     /// Wedge-safe keepalive decision: keep the video pipeline alive on background ONLY while the app stays
     /// genuinely running (PiP active, or actively playing for background audio), never across an idle
@@ -5614,6 +5618,7 @@ public final class AetherEngine: ObservableObject {
 
     public func play() {
         recordTransportDuringRebuild(playing: true)
+        if deferPlayForInterruption() { return }
         // AetherEngine#164: a VOD parked at its final frame (scrubbed to the end, or paused there)
         // cannot advance; AVPlayer.play() would no-op and leave the button frozen. Rewind to the start
         // first, then resume. `.ended` is excluded (see shouldRewindBeforePlay): it stays terminal so a
@@ -5637,6 +5642,7 @@ public final class AetherEngine: ObservableObject {
     public func pause() {
         recordTransportDuringRebuild(playing: false)
         resumeAfterInterruption = false
+        playDeferredByInterruption = false
         activeTransportHost?.pause()
         isBuffering = false
         if state == .playing {
@@ -7312,6 +7318,14 @@ public final class AetherEngine: ObservableObject {
             activeTransportHost?.setResumeRate(clamped)
             return
         }
+        // F5: a speed change must not restart audio the system just paused for an interruption.
+        if clamped != 0, Self.interruptionHoldsTransport(
+            interrupted: audioInterruptionActive, rendererPath: softwareHost != nil || audioHost != nil
+        ) {
+            EngineLog.emit("[AetherEngine] setRate(\(clamped)) held: an audio interruption is active; the speed applies when playback resumes", category: .engine)
+            activeTransportHost?.setResumeRate(clamped)
+            return
+        }
         activeTransportHost?.setRate(clamped)
     }
 
@@ -7606,6 +7620,8 @@ public final class AetherEngine: ObservableObject {
         loadGeneration &+= 1
         scrubPreviewSourceGeneration = UUID()
         resumeAfterInterruption = false
+        playDeferredByInterruption = false
+        audioInterruptionActive = false
         #if os(iOS) || os(tvOS)
         // A deactivation still queued from a previous teardown must not land on this session (#215).
         audioSessionDeactivationTask?.cancel()
@@ -7972,6 +7988,7 @@ public final class AetherEngine: ObservableObject {
                 guard let self else { return }
                 let session = AVAudioSession.sharedInstance()
                 if began {
+                    self.noteAudioInterruptionBegan()
                     let intent = self.nativeHost?.transportIntentIsPlaying ?? (self.state == .playing)
                     let stateEligible: Bool
                     switch self.state {
@@ -7989,8 +8006,9 @@ public final class AetherEngine: ObservableObject {
                     #else
                     let backgroundSafe = true
                     #endif
-                    let firing = self.resumeAfterInterruption && backgroundSafe && shouldResume
-                    EngineLog.emit("[AetherEngine] AVAudioSession interruption ENDED shouldResume=\(shouldResume) otherAudio=\(session.isOtherAudioPlaying) resumeArmed=\(self.resumeAfterInterruption) autoResume=\(firing)", category: .engine)
+                    let deferredPlay = self.noteAudioInterruptionEnded()
+                    let firing = (self.resumeAfterInterruption && shouldResume || deferredPlay) && backgroundSafe
+                    EngineLog.emit("[AetherEngine] AVAudioSession interruption ENDED shouldResume=\(shouldResume) otherAudio=\(session.isOtherAudioPlaying) resumeArmed=\(self.resumeAfterInterruption) autoResume=\(firing) deferredPlay=\(deferredPlay)", category: .engine)
                     if firing {
                         self.resumeAfterInterruption = false
                         // AE#549: the native path gets its session back from AVFoundation, the renderer

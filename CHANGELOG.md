@@ -10,7 +10,13 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **The documentation no longer says TrueHD Atmos objects are always lost.** The Known limitations
+  entry in `docs/formats.md`, the `AudioDelivery.bridged` reference and the channel bridge's notes
+  predate `objectAudioRendering` (#731) and said objects and heights never survive. They now say the
+  channel bridge drops them and `objectAudioRendering = .apac(layout)` keeps them, rendered into a
+  speaker bed as lossy APAC that tvOS sends to an Atmos receiver as Dolby MAT. No behaviour change.
 
 ## [7.39.0] - 2026-10-17
 

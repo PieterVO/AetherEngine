@@ -99,15 +99,38 @@ struct InterruptionPlayGuardTests {
         #expect(!engine.noteAudioInterruptionEnded())
     }
 
-    @Test("a second press while one is held goes through, so a stuck interruption cannot trap the transport")
-    func secondPressEscapes() throws {
+    @Test("a second press while one is held clears the guard and plays after the session is reactivated")
+    func secondPressEscapes() async throws {
         let engine = try engine()
         defer { engine.stop() }
         engine.noteAudioInterruptionBegan()
         engine.play()
         engine.play()
-        #expect(engine.state == .playing)
         #expect(!engine.audioInterruptionActive)
+        #expect(!engine.playDeferredByInterruption)
+        for _ in 0..<50 where engine.state != .playing { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(engine.state == .playing)
+    }
+
+    @Test("a pause right after the escape press wins over the reactivation")
+    func pauseBeatsEscape() async throws {
+        let engine = try engine()
+        defer { engine.stop() }
+        engine.noteAudioInterruptionBegan()
+        engine.play()
+        engine.play()
+        engine.pause()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(engine.state == .paused)
+    }
+
+    @Test("setRate(0) also disarms the system resume")
+    func zeroRateCountsAsPause() throws {
+        let engine = try engine()
+        defer { engine.stop() }
+        let before = engine.userPauseCount
+        engine.setRate(0)
+        #expect(engine.userPauseCount == before &+ 1)
     }
 
     @Test("the end of an interruption: system resume needs the armed intent, a held press always plays, never unseen")

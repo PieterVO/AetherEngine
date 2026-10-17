@@ -27,12 +27,26 @@ extension AetherEngine {
         if playDeferredByInterruption {
             audioInterruptionActive = false
             playDeferredByInterruption = false
-            EngineLog.emit("[AetherEngine] play() pressed again during an interruption: letting it through", category: .engine)
-            return false
+            EngineLog.emit("[AetherEngine] play() pressed again during an interruption: reactivating the session, then playing", category: .engine)
+            playAfterReactivatingSession()
+            return true
         }
         playDeferredByInterruption = true
         EngineLog.emit("[AetherEngine] play() held: an audio interruption is active; it runs when the interruption ends", category: .engine)
         return true
+    }
+
+    /// A stuck interruption leaves the renderer's session inactive, which stops the audio clock, so the
+    /// escape reactivates it before playing. A pause or a new load during the await wins.
+    func playAfterReactivatingSession() {
+        let pausesBefore = userPauseCount
+        let loadBefore = loadGeneration
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.activateRendererAudioSession()
+            guard self.userPauseCount == pausesBefore, self.loadGeneration == loadBefore else { return }
+            self.play()
+        }
     }
 
     /// Pure: whether the end of an interruption plays. The system-granted resume needs the armed

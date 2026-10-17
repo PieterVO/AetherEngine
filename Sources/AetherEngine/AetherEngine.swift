@@ -7314,7 +7314,11 @@ public final class AetherEngine: ObservableObject {
         }
         // Zero is a pause, not a speed: it must not become what a later resume comes back at (#436).
         if clamped != 0 { desiredRate = clamped }
-        if clamped == 0 { playDeferredByInterruption = false }
+        if clamped == 0 {
+            playDeferredByInterruption = false
+            resumeAfterInterruption = false
+            userPauseCount &+= 1
+        }
         // #730: while paused a speed is a speed, not a play press. Handing it to the host would play
         // (`avPlayer.rate = x`) behind a state that still says paused; seeding the resume rate is what
         // the next play() reads on every host.
@@ -8017,6 +8021,7 @@ public final class AetherEngine: ObservableObject {
                         armed: self.resumeAfterInterruption, shouldResume: shouldResume,
                         deferredPlay: deferredPlay, backgroundSafe: backgroundSafe)
                     let pausesBefore = self.userPauseCount
+                    let loadBefore = self.loadGeneration
                     EngineLog.emit("[AetherEngine] AVAudioSession interruption ENDED shouldResume=\(shouldResume) otherAudio=\(session.isOtherAudioPlaying) resumeArmed=\(self.resumeAfterInterruption) autoResume=\(firing) deferredPlay=\(deferredPlay)", category: .engine)
                     if firing {
                         self.resumeAfterInterruption = false
@@ -8032,7 +8037,7 @@ public final class AetherEngine: ObservableObject {
                             await self.activateRendererAudioSession()
                         }
                         // A pause pressed while the session was being reactivated wins.
-                        guard self.userPauseCount == pausesBefore else { return }
+                        guard self.userPauseCount == pausesBefore, self.loadGeneration == loadBefore else { return }
                         self.play()
                     }
                 }

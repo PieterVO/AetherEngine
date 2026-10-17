@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.39.0] - 2026-10-17
+
 **Not built by default any more: TrueHD Atmos and DTS:X object rendering, Profile 7 FEL dual-layer
 composition, and Dolby Vision Profile 5 / 10.0 stills.** Each is now an optional component behind a
 package trait that is off by default (`TrueHDObjectAudio`, `DTSXObjectAudio`, `DualLayerDolbyVision`,

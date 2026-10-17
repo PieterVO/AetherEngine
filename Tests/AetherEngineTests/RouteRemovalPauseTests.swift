@@ -36,7 +36,9 @@ struct RouteRemovalPauseTests {
     func otherStatesUntouched() throws {
         for state in [PlaybackState.paused, .loading, .idle] {
             let engine = try engine(state: state)
+            engine.isBuffering = true
             engine.noteOutputRouteRemoved()
+            #expect(engine.isBuffering, "pause() must not have run")
             #expect(engine.state == state)
             engine.stop()
         }
@@ -48,5 +50,14 @@ struct RouteRemovalPauseTests {
         defer { engine.stop() }
         engine.noteOutputRouteRemoved()
         #expect(engine.state == .playing)
+    }
+
+    @Test("a route removal during a seek still pauses")
+    func pausesDuringSeek() throws {
+        let engine = try engine(state: .seeking)
+        defer { engine.stop() }
+        engine.isBuffering = true
+        engine.noteOutputRouteRemoved()
+        #expect(!engine.isBuffering, "pause() ran: it clears the buffering flag")
     }
 }

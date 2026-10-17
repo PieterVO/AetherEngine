@@ -26,7 +26,9 @@ extension AetherEngine {
     /// the native path is paused by AVPlayer. Goes through `pause()`, so it is a pause like any other
     /// (disarms an interruption resume, publishes `.paused`).
     func noteOutputRouteRemoved() {
-        guard softwareHost != nil || audioHost != nil, state == .playing else { return }
+        guard softwareHost != nil || audioHost != nil else { return }
+        // A seek in flight is playing as far as the viewer is concerned and resumes into the new route.
+        guard state == .playing || state == .seeking else { return }
         EngineLog.emit("[AetherEngine] audio route removed while playing; pausing like AVPlayer", category: .engine)
         pause()
     }

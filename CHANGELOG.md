@@ -10,7 +10,22 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **TrueHD Atmos and DTS:X object rendering, and Profile 7 FEL dual-layer composition, are optional
+  components, off by default.** Each is compiled only with its package trait: `TrueHDObjectAudio`
+  (LibTrueHD and the object renderer), `DTSXObjectAudio` (LibDTSX and the object renderer) and the new
+  `DualLayerDolbyVision` (`DualLayerVideoDecoder`, the Metal composer and the FEL diagnostics). The two
+  audio traits used to be on by default. Without a trait the component is not in the binary, and the
+  option that asks for it stays in the API and changes nothing: `objectAudioRendering` keeps the codec on
+  the channel bridge, `preferDualLayerDolbyVision` keeps a Profile 7 source on the native route (the
+  route line reads `not taken (built without the DualLayerDolbyVision trait)`). These components may be
+  subject to third-party patent licensing; integrators who enable them are responsible for their own
+  licensing. **A host that relied on TrueHD Atmos or DTS:X rendering enables the traits** on its package
+  dependency (`traits: ["TrueHDObjectAudio", "DTSXObjectAudio"]`, [README › Optional
+  components](README.md#optional-components)). The `@_spi(Diagnostics)` FEL tooling (`felDecodeProbe`,
+  `FelProbeResult`, `felResidualEnabled`) exists only with `DualLayerDolbyVision`, as do `aetherctl
+  feltest` and `play --cycle-el`. CI builds and tests the default and the all-traits configuration.
 
 ## [7.38.1] - 2026-10-16
 

@@ -25,20 +25,26 @@ let package = Package(
         // platforms. The target is preserved below so `swift build` on
         // macOS still produces the CLI for upstream development.
     ],
-    // Each object-audio decoder library sits behind a trait of its own, both on by default. A host that
-    // cannot ship one of them turns its trait off (`.package(url:..., traits: [...])`, or the package's
-    // traits in Xcode): the library is then not linked, and its codec keeps the channel bridge whatever
-    // `objectAudioRendering` asks. LibDovi, FFmpeg and everything else are unaffected.
+    // Three optional components, all off by default. A host that wants one enables its trait
+    // (`.package(url:..., traits: [...])`, or the package's traits in Xcode); without it the code is not
+    // compiled and the library behind it is not linked. These components may be subject to third-party
+    // patent licensing; an integrator that enables one is responsible for its own licensing. Off, the
+    // matching LoadOptions are accepted and change nothing: object audio keeps the channel bridge, and a
+    // Profile 7 source keeps the native route. LibDovi, FFmpeg and everything else are unaffected.
     traits: [
         .trait(
             name: "TrueHDObjectAudio",
-            description: "Link LibTrueHD, so objectAudioRendering can render TrueHD Atmos objects to APAC."
+            description: "Link LibTrueHD and the object renderer, so objectAudioRendering can render TrueHD Atmos objects to APAC."
         ),
         .trait(
             name: "DTSXObjectAudio",
-            description: "Link LibDTSX, so objectAudioRendering can render DTS:X heights and objects to APAC."
+            description: "Link LibDTSX and the object renderer, so objectAudioRendering can render DTS:X heights and objects to APAC."
         ),
-        .default(enabledTraits: ["TrueHDObjectAudio", "DTSXObjectAudio"]),
+        .trait(
+            name: "DualLayerDolbyVision",
+            description: "Compile the Dolby Vision Profile 7 FEL dual-layer composer, so preferDualLayerDolbyVision can take that route."
+        ),
+        .default(enabledTraits: []),
     ],
     dependencies: [
         // Minimal FFmpeg build (avcodec, avformat, avutil, swresample only).

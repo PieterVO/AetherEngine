@@ -1,3 +1,5 @@
+// Only with the DualLayerDolbyVision trait: the composer is not built without it.
+#if DualLayerDolbyVision
 import Testing
 import Foundation
 import CoreVideo
@@ -392,3 +394,4 @@ struct DoviGpuCurveSweepTests {
         #expect(output[1023][0] == 940)
     }
 }
+#endif

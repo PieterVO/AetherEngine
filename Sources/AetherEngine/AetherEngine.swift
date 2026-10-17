@@ -3782,6 +3782,8 @@ public final class AetherEngine: ObservableObject {
     /// Block-based observers are NOT auto-removed on dealloc; the bag removes them in its own deinit.
     /// A MainActor deinit can't touch non-Sendable stored state under Swift 6, hence the helper class.
     private let lifecycleObservers = LifecycleObserverBag()
+    /// For lifecycle observers installed from extension files.
+    func retainLifecycleObserver(_ observer: NSObjectProtocol) { lifecycleObservers.append(observer) }
 
     private final class LifecycleObserverBag: @unchecked Sendable {
         private let lock = NSLock()
@@ -7963,6 +7965,10 @@ public final class AetherEngine: ObservableObject {
 
         #if os(iOS) || os(tvOS)
         AudioRouteDescription.changeLogger
+        #endif
+
+        #if os(iOS) || os(tvOS)
+        installRouteRemovalObserver()
         #endif
 
         #if os(iOS)

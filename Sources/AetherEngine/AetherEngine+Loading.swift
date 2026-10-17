@@ -1944,7 +1944,7 @@ extension AetherEngine {
             EngineLog.emit("[AetherEngine] activateRendererAudioSession error: \(error)", category: .engine)
         }
         let maxCh = session.maximumOutputNumberOfChannels
-        let prefCh = min(sourceChannels ?? maxCh, maxCh)
+        let prefCh = preferredOutputChannels(sourceChannels: sourceChannels, maxOutput: maxCh)
         try? session.setPreferredOutputNumberOfChannels(prefCh)
         EngineLog.emit("[AetherEngine] renderer audio session active: sourceCh=\(sourceChannels?.formatted() ?? "unknown") maxChannels=\(maxCh) preferred=\(session.preferredOutputNumberOfChannels) output=\(session.outputNumberOfChannels)", category: .engine)
     }

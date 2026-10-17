@@ -49,13 +49,17 @@ extension AetherEngine {
                 _ = self.enqueueAudioSessionTransition {
                     // Off the main actor (AE#538): the reads, the compare and the write are one step.
                     let session = AVAudioSession.sharedInstance()
-                    guard let wanted = AetherEngine.channelPreferenceTarget(
+                    guard session.maximumOutputNumberOfChannels > 0,
+                          let wanted = AetherEngine.channelPreferenceTarget(
                         preferredNow: session.preferredOutputNumberOfChannels,
                         sourceChannels: sources, maxOutput: session.maximumOutputNumberOfChannels
                     ) else { return }
-                    do { try session.setPreferredOutputNumberOfChannels(wanted) }
-                    catch { EngineLog.emit("[AetherEngine] route change: channel preference write failed: \(error)", category: .engine) }
-                    EngineLog.emit("[AetherEngine] route change: channel preference -> \(wanted) (source=\(sources?.formatted() ?? "unknown") max=\(session.maximumOutputNumberOfChannels) output=\(session.outputNumberOfChannels))", category: .engine)
+                    do {
+                        try session.setPreferredOutputNumberOfChannels(wanted)
+                        EngineLog.emit("[AetherEngine] route change: channel preference -> \(wanted) (source=\(sources?.formatted() ?? "unknown") max=\(session.maximumOutputNumberOfChannels) output=\(session.outputNumberOfChannels))", category: .engine)
+                    } catch {
+                        EngineLog.emit("[AetherEngine] route change: channel preference write failed: \(error)", category: .engine)
+                    }
                 }
             }
         }

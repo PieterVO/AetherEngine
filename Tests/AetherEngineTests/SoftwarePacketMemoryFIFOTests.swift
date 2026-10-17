@@ -95,8 +95,10 @@ struct SoftwarePacketMemoryFIFOTests {
     @Test("emptied history is evicted on a check, before any restore walks into it (#759)")
     func evictPurgedHistory() throws {
         let (fifo, cursors) = try filled(100)
-        for _ in 0..<90 { _ = try fifo.pop() }
+        // Unread chunks cannot be purged. Once consumed, the kernel may empty
+        // history before the explicit test purge, so do not evict it in between.
         #expect(!fifo.evictPurgedHistory())
+        for _ in 0..<90 { _ = try fifo.pop() }
         let before = try #require(fifo.snapshot.oldestRetainedChunkID)
         fifo.purgeHistoryForTesting()
         #expect(fifo.evictPurgedHistory())

@@ -51,12 +51,15 @@ struct SoftwareAtmosRouteTests {
         #expect(route(codec: AV_CODEC_ID_AC3) == .pcm)
     }
 
-    @Test("TrueHD Atmos and DTS-HD MA render as APAC on an OS that has the encoder")
+    @Test("TrueHD Atmos and DTS-HD MA render as APAC on an OS that has the encoder, in a build with the codec's trait")
     func apacRoutes() {
+        // Without a codec's object-audio trait the renderer is not built in and the track keeps the PCM decode.
+        let trueHD: SoftwareAtmosRoute = AetherEngine.OptionalComponent.trueHDObjectAudio.isBuiltIn ? .apac(.l714) : .pcm
+        let dtsx: SoftwareAtmosRoute = AetherEngine.OptionalComponent.dtsxObjectAudio.isBuiltIn ? .apac(.l512) : .pcm
         #expect(route(codec: AV_CODEC_ID_TRUEHD, profile: AV_PROFILE_TRUEHD_ATMOS, channels: 8, frame: 0)
-                == .apac(.l714))
+                == trueHD)
         #expect(route(codec: AV_CODEC_ID_DTS, profile: AV_PROFILE_DTS_HD_MA, channels: 8, frame: 0,
-                      rendering: .apac(.l512)) == .apac(.l512))
+                      rendering: .apac(.l512)) == dtsx)
         #expect(route(codec: AV_CODEC_ID_TRUEHD, profile: AV_PROFILE_TRUEHD_ATMOS, apacOS: false) == .pcm)
     }
 

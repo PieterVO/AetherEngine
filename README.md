@@ -387,7 +387,7 @@ Subtitle cues land in raw source PTS; render the overlay against `player.sourceT
 Install via Swift Package Manager:
 
 ```swift
-.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.39.0")
+.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.40.0")
 ```
 
 Three samples ship in `Examples/`:
@@ -634,10 +634,10 @@ Browse all of this as a searchable site at **[aetherengine.superuser404.de](http
 AetherEngine uses [Semantic Versioning](https://semver.org). The public API surface, every `public` declaration in `Sources/AetherEngine/`, is the stability contract. **Major** removes / renames public symbols or breaks adopters; **Minor** adds public API or codec / format support; **Patch** fixes bugs with no public API change. `internal` types are not part of the contract.
 
 ```swift
-.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.39.0")
+.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.40.0")
 ```
 
-Pin to `.upToNextMinor(from: "7.39.0")` for stricter teams that prefer to opt into minor bumps explicitly.
+Pin to `.upToNextMinor(from: "7.40.0")` for stricter teams that prefer to opt into minor bumps explicitly.
 
 ## Requirements
 
@@ -672,11 +672,11 @@ These components may be subject to third-party patent licensing. Integrators who
 To enable them, list the traits on the package dependency:
 
 ```swift
-.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.39.0",
+.package(url: "https://github.com/superuser404notfound/AetherEngine", from: "7.40.0",
          traits: ["TrueHDObjectAudio", "DTSXObjectAudio", "DualLayerDolbyVision", "DolbyVisionStillReshaping"])
 ```
 
-In an Xcode project, a remote package's traits are set in the package dependency editor (Project › Package Dependencies), and Xcode stores them in the `.pbxproj`. XcodeGen cannot express them yet (2.45.4 drops a `traits:` key on a package without a word), so an XcodeGen project either patches the generated `.pbxproj` after each generate, or depends on a small local package that depends on AetherEngine with the traits set and re-exports it (`@_exported import AetherEngine`). [Probes/AllTraits](Probes/AllTraits/Package.swift) is that package with every trait on, and `Probes/DolbyVisionPulse/Device/PulseEngine` one with `DualLayerDolbyVision` alone. The engine itself builds with them through `swift build --traits TrueHDObjectAudio,DTSXObjectAudio,DualLayerDolbyVision,DolbyVisionStillReshaping` (or `--enable-all-traits`); CI builds and tests both the default and the all-traits configuration, and builds the all-traits engine for tvOS and iOS through `Probes/AllTraits`.
+In an Xcode project, a remote package's traits are set in the package dependency editor (Project › Package Dependencies), and Xcode stores them in the `.pbxproj`. XcodeGen cannot express them yet (2.45.4 drops a `traits:` key on a package without a word), so an XcodeGen project either patches the generated `.pbxproj` after each generate (a `traits = ( TrueHDObjectAudio, DTSXObjectAudio, );` list in the package's `XCRemoteSwiftPackageReference`, which Xcode 27 builds with), or depends on a small local package that depends on AetherEngine with the traits set and re-exports it (`@_exported import AetherEngine`). [Probes/AllTraits](Probes/AllTraits/Package.swift) is that package with every trait on, and `Probes/DolbyVisionPulse/Device/PulseEngine` one with `DualLayerDolbyVision` alone. The engine itself builds with them through `swift build --traits TrueHDObjectAudio,DTSXObjectAudio,DualLayerDolbyVision,DolbyVisionStillReshaping` (or `--enable-all-traits`); CI builds and tests both the default and the all-traits configuration, and builds the all-traits engine for tvOS and iOS through `Probes/AllTraits`.
 
 ## Support
 

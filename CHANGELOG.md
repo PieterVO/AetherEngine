@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.40.0] - 2026-10-18
+
 ### Changed
 
 - **TrueHD Atmos is built from the stream's own channel presentation.** With `objectAudioRendering`

@@ -168,7 +168,9 @@ extension AetherEngine {
         selectSubtitleTrack(index: Int(index), startAt: anchor > 0 ? anchor : sourceTime)
     }
 
-    /// Activate an embedded subtitle stream as the secondary companion track (issue #47). Text-only; bitmap codecs are rejected. Runs a second side demuxer concurrently. External ids (#88) route onto the secondary sidecar decode.
+    /// Activate an embedded subtitle stream as the secondary companion track (issue #47).
+    /// Text and supported bitmap codecs use an independent decoder and cursor over the shared
+    /// packet store. External ids (#88) route onto the secondary sidecar decode.
     public func selectSecondarySubtitleTrack(index: Int) {
         externalSubtitleIntentGeneration &+= 1
         selectSecondarySubtitleTrack(index: index, startAt: sourceTime)
@@ -1754,7 +1756,7 @@ extension AetherEngine {
     }
 
     /// Turn the secondary subtitle off and clear its cues. Tears down
-    /// the secondary sidecar decode task and the secondary side reader.
+    /// the secondary sidecar decode task and its packet-store drain target.
     public func clearSecondarySubtitle() {
         externalSubtitleIntentGeneration &+= 1
         hostExplicitSubtitleAction = true

@@ -90,6 +90,14 @@ the public-API contract.
 
 ### Changed
 
+- **The secondary subtitle documentation no longer says bitmap tracks are rejected (#825, thanks
+  @orut34iop).** `selectSecondarySubtitleTrack(index:)`, `secondarySubtitleCues` and
+  `docs/formats.md` still described the text-only side demuxer that #112 replaced. Embedded PGS,
+  DVB and DVD tracks already decode on the secondary channel with their own decoder, cursor and PGS
+  admission state over the shared packet store. A dual-PGS drain test now pins that: reused palette
+  and object IDs, an authored clear, off and reselect, and reconstruction after a seek. No playback
+  change.
+
 - `aetherctl play` rejects `--no-fel` and `--no-dual-layer` as stray flags. They were accepted as no-ops
   since 7.37.0 for scripts written when `play` turned the dual-layer route on by itself.
 

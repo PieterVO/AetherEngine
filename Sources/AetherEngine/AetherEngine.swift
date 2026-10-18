@@ -1434,7 +1434,7 @@ public final class AetherEngine: ObservableObject {
     /// Independent of the primary header; nil for other formats and after clearing or stopping.
     @Published public internal(set) var secondarySidecarASSHeader: String? = nil
 
-    /// Cues for the secondary subtitle track (#47). Text-only (bitmap rejected); independent of primary.
+    /// Cues for the secondary subtitle track (#47). Text and supported bitmap codecs; independent of primary.
     @Published public internal(set) var secondarySubtitleCues: [SubtitleCue] = []
     @Published public internal(set) var isLoadingSecondarySubtitles: Bool = false
     @Published public internal(set) var isSecondarySubtitleActive: Bool = false

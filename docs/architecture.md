@@ -715,3 +715,7 @@ never repeats an already completed startup cushion wait. The change does not
 cut a GOP at a dependent frame or falsify a segment's duration. A consumer item
 replacement can still cause a short interruption; missing source frames cannot
 be reconstructed by this policy.
+
+### Quantized audio packet coverage
+
+`SoftwareAudioPacketCoverage` retains feasible integer sample-clock phases across admitted audio packets rather than bridging every small gap with an epsilon. Codec geometry is limited to fixed MPEG audio/AC-3 frames, declared AAC/E-AC-3 frame sizes, complete non-reservoir WMA v1/v2 blocks and exact PCM sample frames. Unknown, packed or conflicting layouts keep strict positive-duration intervals. Missing timestamps, backwards transitions and arithmetic overflow break clock evidence; a genuine missing packet or accumulated extra tick remains a hole. This changes packet-cache coverage and seek admission, not the decoded audio output clock. Duration-less audio retains the bounded successor-PTS contract, including repeated TrueHD millisecond timestamps.

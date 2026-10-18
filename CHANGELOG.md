@@ -12,6 +12,8 @@ the public-API contract.
 
 ### Changed
 
+- Software packet-cache audio coverage joins timestamp quantization only when admitted codec sample geometry supports one continuous rational sample clock. Unknown layouts, real gaps and accumulating drift remain strict; duration-less audio keeps its successor coverage.
+
 - **The documentation no longer says TrueHD Atmos objects are always lost.** The Known limitations
   entry in `docs/formats.md`, the `AudioDelivery.bridged` reference and the channel bridge's notes
   predate `objectAudioRendering` (#731) and said objects and heights never survive. They now say the

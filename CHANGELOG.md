@@ -10,7 +10,12 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- Keep persistent HTTP/1.1 body framing in the caller's isolation while reading
+  chunks. Swift 6.4 can otherwise reject the cancellation-handler read with
+  "sending 'current' risks causing data races"; the chunked decoder remains
+  single-consumer, without unchecked Sendable conformance or an executor hop.
 
 ## [7.40.0] - 2026-10-18
 

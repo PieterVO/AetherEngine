@@ -20,11 +20,13 @@ import Foundation
 ///   times what its ear-level share of them allows). The decode without interpolation leaves a
 ///   residue in quiet elements; bounded by the bed, it can no longer pull a quiet channel's content
 ///   up or sideways.
-/// - Per output and band, an output the split leaves short of the energy the elements would give it
-///   in a direct render is raised towards it (smoothed over about 200 ms, at most `balanceLimit`),
-///   which restores the spread a per-bin split loses where several elements share a bin. It is never
-///   lowered: the elements' energies add up to less than a mix of them wherever they carry the same
-///   signal, so a target below the split is the estimate's shortfall, not the mix's.
+/// - Per output and band, the result is steered towards the energy the elements would give that
+///   output in a direct render (smoothed over about 200 ms), which restores the spread a per-bin
+///   split loses where several elements share a bin. Raised fully (at most `balanceLimit`), lowered
+///   only by a third of the gap in dB (`balanceLowering`): the elements' energies add up to less than
+///   a mix of them wherever they carry the same signal, so a target below the split is mostly the
+///   estimate's shortfall, and lowering fully cost heights. Not lowering at all let a split that
+///   over-allocates stand.
 ///
 /// The LFE is the bed's own, delayed alongside.
 ///
@@ -38,6 +40,8 @@ final class BedSplitter {
     static let boundMinShare: Float = 0.05
     static let balanceSmoothing: Float = 0.95
     static let balanceLimit: Float = 4
+    /// A lowering is applied at this fraction of its size in dB.
+    static let balanceLowering: Float = 1.0 / 3
 
     let layout: SpatialSpeakerLayout
     let bedRoles: [ObjectAudioRole]
@@ -578,7 +582,7 @@ final class BedSplitter {
             }
         }
 
-        // Balance per output and band: raised towards the energy a direct render would give it.
+        // Balance per output and band, towards the energy a direct render would give it.
         let a = Self.balanceSmoothing
         for band in 0..<bands {
             let lo = bandEdges[band], hi = min(bandEdges[band + 1], bins)
@@ -592,7 +596,8 @@ final class BedSplitter {
                 smoothedSplit[slot] = a * smoothedSplit[slot] + (1 - a) * e
                 let st = smoothedTarget[slot], se = smoothedSplit[slot]
                 guard st > tiny, se > tiny else { continue }
-                let g = min(max(st / se, 1), Self.balanceLimit).squareRoot()
+                let r = st / se
+                let g = (r >= 1 ? min(r, Self.balanceLimit) : pow(r, Self.balanceLowering)).squareRoot()
                 for b in lo..<hi { outRe[row + b] *= g; outIm[row + b] *= g }
             }
         }

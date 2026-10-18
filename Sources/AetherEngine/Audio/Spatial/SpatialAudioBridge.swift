@@ -436,6 +436,11 @@ final class SpatialAudioBridge: AudioTranscodingBridge, @unchecked Sendable {
             pendingFrames += splitter.process(
                 elements: nil, bed: nil, frameCount: block.frameCount,
                 output: output.planes.map { $0 + pendingFrames })
+        } else if decoder.playsBedOnly {
+            // No bed yet: silence, never a mix of the object signals.
+            renderer!.advance(frameCount: block.frameCount, updates: block.updates)
+            for plane in output.planes { (plane + pendingFrames).update(repeating: 0, count: block.frameCount) }
+            pendingFrames += block.frameCount
         } else {
             renderer!.render(
                 inputs: block.planes, frameCount: block.frameCount, updates: block.updates,

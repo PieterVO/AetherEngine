@@ -51,10 +51,14 @@ protocol ObjectAudioDecoding: AnyObject {
     /// How often the decoder has reset ITSELF after an internal failure. Its input offsets count from
     /// zero again afterwards, so the caller has to re-anchor its timeline.
     var selfResetCount: Int { get }
+    /// The decoder's output is meant to come from its channel bed (`ObjectAudioDecodedBlock.bed`) and
+    /// nothing else: a block without one plays as silence rather than through the renderer's mix.
+    var playsBedOnly: Bool { get }
 }
 
 extension ObjectAudioDecoding {
     var selfResetCount: Int { 0 }
+    var playsBedOnly: Bool { false }
     func releaseHeldBlocks() {}
 }
 #endif

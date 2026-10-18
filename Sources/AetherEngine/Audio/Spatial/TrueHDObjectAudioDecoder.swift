@@ -30,6 +30,7 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
     private var rolesSerial: UInt32?
     private var planes: [UnsafePointer<Float>] = []
     let splitsBed: Bool
+    var playsBedOnly: Bool { splitsBed }
     private var bedRoles: [ObjectAudioRole] = []
     private var bedRolesSerial: UInt32?
     private var bedPlanes: [UnsafePointer<Float>] = []
@@ -131,7 +132,9 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
                                   ? state(for: element) : nil)
                 }
                 updates.append(ObjectAudioMetadataUpdate(
-                    frameOffset: Int(update.frame_offset), rampFrames: Int(update.ramp_frames), states: states))
+                    frameOffset: Int(update.frame_offset),
+                    // Splitting the bed, each update is taken as it stands, without the ramp towards it.
+                    rampFrames: splitsBed ? 0 : Int(update.ramp_frames), states: states))
             }
         }
 

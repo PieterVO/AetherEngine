@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Fixed
+
+- A fully prewarmed source no longer issues a redundant suffix request when its adopted head already covers the entire file. Partial warms retain their existing tail prefetch.
+
 ### Changed
 
 - **The documentation no longer says TrueHD Atmos objects are always lost.** The Known limitations

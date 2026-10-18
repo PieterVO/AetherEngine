@@ -542,7 +542,9 @@ final class HLSVODIngestReader: TimeSeekableIOReader, @unchecked Sendable {
             throw HLSIngestError.playlistInvalid(reason: "segment body over its limit")
         }
         guard total > 0 else { throw HLSIngestError.playlistUnreachable(status: body.response.statusCode) }
-        return pending.isEmpty || append(pending, generation: generation)
+        // Between segments the ceiling holds even when the last chunk was taken just under it: the
+        // next request waits for the reader either way, not only when bytes are left over.
+        return pending.isEmpty ? waitForRoom(generation: generation) : append(pending, generation: generation)
     }
 
     private enum Offer { case taken, full, superseded }
@@ -572,6 +574,18 @@ final class HLSVODIngestReader: TimeSeekableIOReader, @unchecked Sendable {
             throw HLSIngestError.playlistUnreachable(status: body.response.statusCode)
         }
         return body
+    }
+
+    /// Parks until the FIFO is below its ceiling. False when the generation was superseded.
+    private func waitForRoom(generation: UInt64) -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        while self.generation == generation,
+              !closed,
+              bufferedBytes >= Self.maximumBufferedBytes {
+            condition.wait()
+        }
+        return self.generation == generation && !closed
     }
 
     private func append(_ data: Data, generation: UInt64) -> Bool {

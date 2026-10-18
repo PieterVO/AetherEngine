@@ -10,8 +10,31 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.40.0] - 2026-10-18
+
 ### Changed
 
+- **TrueHD Atmos is built from the stream's own channel presentation.** With `objectAudioRendering`
+  in a `TrueHDObjectAudio` build, every output is now a share of the 7.1 (or 5.1) bed Dolby renders
+  the same mix into, split per frequency bin between floor and heights by where the objects' energy
+  lies (`BedSplitter`). No object signal is mixed into an output; the objects are decoded without
+  their matrix interpolation (LibTrueHD 3.0 no longer compiles the interpolating decode at all) and
+  taken as points at their positions, without size, snap, zones, screen anchoring, the elevation
+  switch or metadata ramps. Measured against the previous exact render through Apple's APAC decode on
+  72 windows of six films, 0.35 % of the energy lands on another speaker (median of the windows with
+  heights), Dolby's Unfold demo 3.3 %, the heights within about a dB. A 5.1 bed now covers a 7.1
+  layout's rears as well as its sides, and the split's 2048-frame latency is drained at the end of
+  input and before every encoder restart. The exact render it is measured against is only built with
+  the measurement-only `TrueHDReferenceRender` trait (#731).
+- **DTS:X plays its standard presentation only, into 7.1.4 or 9.1.6.** With LibDTSX 3.0, the heights
+  are removed from the 7.1 bed by the standard's own constant (each at -3 dB in the speaker under it)
+  instead of the gains the stream's metadata states, which is no longer read; on twelve DTS:X tracks
+  every frame stated exactly that fold, so the output is bit-identical. The alternate presentations,
+  which carry objects (some IMAX-labelled streams), are refused and play as 7.1, and DTS:X is rendered
+  only into the two layouts that carry the bed and the four heights one to one; any other layout
+  keeps the channel bridge. The object position mapping and the fold renderer are gone (#744).
 - **The documentation no longer says TrueHD Atmos objects are always lost.** The Known limitations
   entry in `docs/formats.md`, the `AudioDelivery.bridged` reference and the channel bridge's notes
   predate `objectAudioRendering` (#731) and said objects and heights never survive. They now say the
@@ -31,6 +54,21 @@ the public-API contract.
   panel without reading the log; they sit behind a lock of their own, so the sampler never waits for a
   decode. `aetherctl play` takes `--atmos-bed` as `serve` does and prints them: on a TrueHD Atmos
   remux, `obj=13/13 up=4 bed=7.1.4`.
+
+### Fixed
+
+- **The persistent HTTP/1.1 ingest holds the next segment request whenever the buffer is full.**
+  Backpressure applied only while a segment still had bytes left over, so a segment whose last chunk
+  was taken just under the 16 MB ceiling sent the next request at once, past the ceiling. The
+  producer now waits for room between segments either way (#732; a test pins the case, and the
+  timing test that caught it on CI no longer flakes).
+- **A slow origin no longer fails large HEVC-in-TS segments on the persistent HTTP/1.1 ingest.**
+  Segment bodies stream to the demuxer instead of downloading whole first, the 45 s ceiling covers
+  only the wait for a response head, and a body ends on its size or on 30 s without a byte (typed
+  `.stalled` rather than the socket's Code=60). One request per origin at a time, so a seek never
+  opens a second connection beside a response in flight (#732).
+- **The relay admits only http and https origins.** A playlist naming another scheme (`file://`
+  included) answers 404 instead of reaching URLSession.
 
 ## [7.39.0] - 2026-10-17
 

@@ -16,12 +16,15 @@ import Foundation
 /// presentation decoded without its matrix interpolation is.
 ///
 /// Two corrections keep that estimate honest:
-/// - An element can hold no more energy than the bed channels it feeds carry (`boundMargin` times what
-///   its ear-level share of them allows). The decode without interpolation leaves a residue in quiet
-///   elements; bounded by the bed, it can no longer pull a quiet channel's content up or sideways.
-/// - Per output and band, the result is steered towards the energy the elements would give that
-///   output in a direct render (smoothed over about 200 ms, at most `balanceLimit` either way), which
-///   restores the spread a per-bin split loses where several elements share a bin.
+/// - Per band, an element can hold no more energy than the bed channels it feeds carry (`boundMargin`
+///   times what its ear-level share of them allows). The decode without interpolation leaves a
+///   residue in quiet elements; bounded by the bed, it can no longer pull a quiet channel's content
+///   up or sideways.
+/// - Per output and band, an output the split leaves short of the energy the elements would give it
+///   in a direct render is raised towards it (smoothed over about 200 ms, at most `balanceLimit`),
+///   which restores the spread a per-bin split loses where several elements share a bin. It is never
+///   lowered: the elements' energies add up to less than a mix of them wherever they carry the same
+///   signal, so a target below the split is the estimate's shortfall, not the mix's.
 ///
 /// The LFE is the bed's own, delayed alongside.
 ///
@@ -104,6 +107,7 @@ final class BedSplitter {
     private var evenBuf: [Float], oddBuf: [Float], specRe: [Float], specIm: [Float]
     private var power: [Float], scratch: [Float]
     private var bedRe: [Float], bedIm: [Float], bedPower: [Float]
+    private var bedBandEnergy: [Float]
     private var den: [Float], floorNum: [Float], topNum: [Float], target: [Float]
     private var outRe: [Float], outIm: [Float], expect: [Float]
 
@@ -187,7 +191,7 @@ final class BedSplitter {
         bedHistory = [Float](repeating: 0, count: bedPlanes * n)
         bedHop = [Float](repeating: 0, count: bedPlanes * h)
         accumulators = [Float](repeating: 0, count: outputs * n)
-        lfeDelay = [Float](repeating: 0, count: n)
+        lfeDelay = [Float](repeating: 0, count: n - h)
         ready = [Float](repeating: 0, count: outputs * h)
         frameBuf = [Float](repeating: 0, count: n)
         evenBuf = [Float](repeating: 0, count: n / 2)
@@ -200,6 +204,7 @@ final class BedSplitter {
         topNum = [Float](repeating: 0, count: beds.count * heights.count * bins)
         target = [Float](repeating: 0, count: outputs * bins)
         outRe = target; outIm = target; expect = target
+        bedBandEnergy = [Float](repeating: 0, count: beds.count * bandEdges.count)
         smoothedTarget = [Float](repeating: 0, count: outputs * bandEdges.count)
         smoothedSplit = smoothedTarget
     }
@@ -446,6 +451,15 @@ final class BedSplitter {
             vDSP_vmma(bedRe, 1, bedRe, 1, bedIm, 1, bedIm, 1, p.baseAddress!, 1, vDSP_Length(B * bins))
         }
         zero(&den); zero(&floorNum); zero(&topNum); zero(&target)
+        let bands = bandEdges.count - 1
+        for j in 0..<B {
+            for band in 0..<bands {
+                let lo = bandEdges[band], hi = min(bandEdges[band + 1], bins)
+                var e: Float = 0
+                if lo < hi { bedPower.withUnsafeBufferPointer { vDSP_sve($0.baseAddress! + j * bins + lo, 1, &e, vDSP_Length(hi - lo)) } }
+                bedBandEnergy[j * bands + band] = e
+            }
+        }
 
         if let weights {
             var re = [Float](repeating: 0, count: bins), im = re
@@ -462,11 +476,23 @@ final class BedSplitter {
                     im.withUnsafeMutableBufferPointer { i in unpack(re: r.baseAddress!, im: i.baseAddress!) }
                 }
                 vDSP_vmma(re, 1, re, 1, im, 1, im, 1, &power, 1, nb)
-                // The bed bound, from every bed channel the element puts a real part of itself in.
-                for j in 0..<B where weights[shares + j] > Self.boundMinShare * shareSum {
-                    var scale = Self.boundMargin / weights[shares + j]
-                    bedPower.withUnsafeBufferPointer { vDSP_vsmul($0.baseAddress! + j * bins, 1, &scale, &scratch, 1, nb) }
-                    vDSP_vmin(power, 1, scratch, 1, &power, 1, nb)
+                // The bed bound, per band, from every bed channel the element puts a real part of
+                // itself in. Per band rather than per bin: in a single bin the bed can hold less than
+                // one element, where several cancel in Dolby's mix, and a per-bin bound cut those.
+                for band in 0..<bands {
+                    let lo = bandEdges[band], hi = min(bandEdges[band + 1], bins)
+                    guard lo < hi else { continue }
+                    var e: Float = 0
+                    vDSP_sve(power.withUnsafeBufferPointer { $0.baseAddress! + lo }, 1, &e, vDSP_Length(hi - lo))
+                    guard e > 0 else { continue }
+                    var limit = Float.infinity
+                    for j in 0..<B where weights[shares + j] > Self.boundMinShare * shareSum {
+                        limit = min(limit, Self.boundMargin * bedBandEnergy[j * bands + band] / weights[shares + j])
+                    }
+                    if e > limit {
+                        var f = limit / e
+                        power.withUnsafeMutableBufferPointer { vDSP_vsmul($0.baseAddress! + lo, 1, &f, $0.baseAddress! + lo, 1, vDSP_Length(hi - lo)) }
+                    }
                 }
                 target.withUnsafeMutableBufferPointer { t in
                     for c in positional {
@@ -497,6 +523,7 @@ final class BedSplitter {
                 }
             }
         }
+
 
         // Each bed channel, split by those shares: a bin no element explains stays on the channel's
         // primary floor output.
@@ -551,9 +578,9 @@ final class BedSplitter {
             }
         }
 
-        // Balance per output and band, towards the energy a direct render would give it.
-        let a = Self.balanceSmoothing, bands = bandEdges.count
-        for band in 0..<(bands - 1) {
+        // Balance per output and band: raised towards the energy a direct render would give it.
+        let a = Self.balanceSmoothing
+        for band in 0..<bands {
             let lo = bandEdges[band], hi = min(bandEdges[band + 1], bins)
             guard lo < hi else { continue }
             for c in positional {
@@ -565,7 +592,7 @@ final class BedSplitter {
                 smoothedSplit[slot] = a * smoothedSplit[slot] + (1 - a) * e
                 let st = smoothedTarget[slot], se = smoothedSplit[slot]
                 guard st > tiny, se > tiny else { continue }
-                let g = min(max(st / se, 1 / Self.balanceLimit), Self.balanceLimit).squareRoot()
+                let g = min(max(st / se, 1), Self.balanceLimit).squareRoot()
                 for b in lo..<hi { outRe[row + b] *= g; outIm[row + b] *= g }
             }
         }
@@ -608,14 +635,16 @@ final class BedSplitter {
                     (a + n - h).update(repeating: 0, count: h)
                 }
             }
+            // The newest hop enters `n - h` back and leaves three hops later, for the hop after
+            // that: `latency` frames, like the split outputs.
             lfeDelay.withUnsafeMutableBufferPointer { d in
-                let p = d.baseAddress!
+                let p = d.baseAddress!, length = n - h
                 (r.baseAddress! + lfeOutput * h).update(from: p, count: h)
-                p.update(from: p + h, count: n - h)
+                p.update(from: p + h, count: length - h)
                 if let bedLFE {
-                    bedHistory.withUnsafeBufferPointer { (p + n - h).update(from: $0.baseAddress! + bedLFE * n + n - h, count: h) }
+                    bedHistory.withUnsafeBufferPointer { (p + length - h).update(from: $0.baseAddress! + bedLFE * n + n - h, count: h) }
                 } else {
-                    (p + n - h).update(repeating: 0, count: h)
+                    (p + length - h).update(repeating: 0, count: h)
                 }
             }
         }

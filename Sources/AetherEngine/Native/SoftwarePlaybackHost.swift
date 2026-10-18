@@ -45,6 +45,44 @@ final class SoftwarePlaybackHost {
     }()
 
 
+    /// Run off-main: disk construction queries volume capacity and opens temporary files.
+    nonisolated static func makePacketStore(
+        storage: SoftwarePacketCacheStorage, forwardSegments: Int?,
+        directory: URL = FileManager.default.temporaryDirectory, claims: RetentionClaims = .shared
+    ) throws -> (any SoftwarePacketStore, Int, RetentionClaims.Claim?)? {
+        let memoryBudget: (forwardBytes: Int, historyBytes: Int)?
+        switch storage {
+        case .automatic: memoryBudget = memoryPacketStoreBudget
+        case .disk: memoryBudget = nil
+        case .memory: memoryBudget = (forwardBytes: 96 << 20, historyBytes: 128 << 20)
+        }
+        let segments = HLSVideoEngine.clampedForwardWindow(forwardSegments)
+        let fifo: any SoftwarePacketStore
+        let bytes: Int
+        var claim: RetentionClaims.Claim?
+        if let memory = memoryBudget {
+            bytes = memory.forwardBytes
+            fifo = SoftwarePacketMemoryFIFO(historyCapBytes: memory.historyBytes)
+            EngineLog.emit("[SWHost] packet cache in memory: forward \(memory.forwardBytes >> 20) MB, "
+                   + "history \(memory.historyBytes >> 20) MB", category: .swPlayback)
+        } else {
+            let temp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            let available = (try? temp.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?
+                .volumeAvailableCapacity.map(Int64.init)
+            let capRelaxed = HLSVideoEngine.retentionCapRelaxed(forwardWindowSegments: segments)
+            let diskClaim = claims.claim(volumeAvailableBytes: available) {
+                HLSVideoEngine.sessionRetentionBudgetBytes(volumeAvailableBytes: $0, capRelaxed: capRelaxed)
+            }
+            bytes = diskClaim.bytes
+            guard bytes > 0 else { return nil }
+            fifo = try SoftwarePacketDiskFIFO(
+                chunkTargetBytes: min(4 << 20, max(8, bytes)), retainConsumed: true,
+                parentDirectory: directory)
+            claim = diskClaim
+        }
+        return (fifo, bytes, claim)
+    }
+
     // MARK: - Published state (mirrors NativeAVPlayerHost surface)
 
     /// Frames enqueued on the display layer; read by LiveTelemetrySampler at 1 Hz for observed FPS. Lock-guarded (demux thread writes, main-actor reads).
@@ -998,7 +1036,8 @@ final class SoftwarePlaybackHost {
         isLive: Bool = false,
         dvrWindowSeconds: Double? = nil,
         dvrRetention: SoftwareDVRRetentionOptions? = nil,
-        forwardBufferSegments: Int? = nil
+        forwardBufferSegments: Int? = nil,
+        packetCacheStorage: SoftwarePacketCacheStorage = .automatic
     ) async throws {
         self.demuxer = dem
         self.duration = dem.duration
@@ -1320,28 +1359,8 @@ final class SoftwarePlaybackHost {
             let videoReorderDepth = Self.presentationReorderDepth(codecID: vCodecID)
             let cacheResult = await BlockingWork.detached(priority: .utility) { () throws -> (SoftwarePacketReadAhead, RetentionClaims.Claim?)? in
                 let segments = HLSVideoEngine.clampedForwardWindow(forwardBufferSegments)
-                let fifo: any SoftwarePacketStore
-                let bytes: Int
-                var claim: RetentionClaims.Claim?
-                if let memory = Self.memoryPacketStoreBudget {
-                    bytes = memory.forwardBytes
-                    fifo = SoftwarePacketMemoryFIFO(historyCapBytes: memory.historyBytes)
-                    EngineLog.emit("[SWHost] packet cache in memory: forward \(memory.forwardBytes >> 20) MB, "
-                                   + "history \(memory.historyBytes >> 20) MB", category: .swPlayback)
-                } else {
-                    let temp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-                    let available = (try? temp.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?
-                        .volumeAvailableCapacity.map(Int64.init)
-                    let capRelaxed = HLSVideoEngine.retentionCapRelaxed(forwardWindowSegments: segments)
-                    let diskClaim = RetentionClaims.shared.claim(volumeAvailableBytes: available) {
-                        HLSVideoEngine.sessionRetentionBudgetBytes(volumeAvailableBytes: $0, capRelaxed: capRelaxed)
-                    }
-                    bytes = diskClaim.bytes
-                    guard bytes > 0 else { return nil }
-                    fifo = try SoftwarePacketDiskFIFO(
-                        chunkTargetBytes: min(4 << 20, max(8, bytes)), retainConsumed: true)
-                    claim = diskClaim
-                }
+                guard let (fifo, bytes, claim) = try Self.makePacketStore(
+                    storage: packetCacheStorage, forwardSegments: segments) else { return nil }
                 let readAhead = SoftwarePacketReadAhead(
                     video: video, audio: audio, byteBudget: bytes,
                     forwardSeconds: Double(segments) * 4,

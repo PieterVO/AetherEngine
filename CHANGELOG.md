@@ -57,6 +57,11 @@ _Nothing yet._
 
 ### Fixed
 
+- **The persistent HTTP/1.1 ingest holds the next segment request whenever the buffer is full.**
+  Backpressure applied only while a segment still had bytes left over, so a segment whose last chunk
+  was taken just under the 16 MB ceiling sent the next request at once, past the ceiling. The
+  producer now waits for room between segments either way (#732; a test pins the case, and the
+  timing test that caught it on CI no longer flakes).
 - **A slow origin no longer fails large HEVC-in-TS segments on the persistent HTTP/1.1 ingest.**
   Segment bodies stream to the demuxer instead of downloading whole first, the 45 s ceiling covers
   only the wait for a response head, and a body ends on its size or on 30 s without a byte (typed

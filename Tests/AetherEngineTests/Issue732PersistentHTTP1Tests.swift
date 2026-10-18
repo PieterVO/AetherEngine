@@ -283,6 +283,33 @@ final class Issue732PersistentHTTP1Tests: XCTestCase {
         XCTAssertEqual(server.connectionCount, 1)
     }
 
+    func testASegmentTakenWholeJustUnderTheCeilingStillHoldsTheNextRequest() async throws {
+        let server = try XCTUnwrap(KeepAliveOrigin())
+        defer { server.stop() }
+        let segments = (0..<3).map { "seg\($0).ts" }
+        // Segment 0 stops 45 KB short of the 16 MB ceiling, so segment 1 (56 KB, one chunk) is taken
+        // whole while the FIFO is under it and lands it over: full, with nothing left in flight.
+        server.route = { path in
+            if path == "/vod.m3u8" { return .init(body: Self.mediaPlaylist(segments)) }
+            guard let index = segments.firstIndex(where: { "/" + $0 == path }) else { return .init(status: 404) }
+            return .init(body: Self.transportStream(marker: UInt8(index), packets: index == 0 ? 89_000 : 300))
+        }
+        let made = try await HLSVODIngestReader.makeIfHEVCMPEGTS(
+            playlistURL: server.url("/vod.m3u8"), httpHeaders: [:], persistentHTTP1: true)
+        let reader = try XCTUnwrap(made)
+        defer { reader.close() }
+
+        var head = [UInt8](repeating: 0, count: 188)
+        XCTAssertEqual(head.withUnsafeMutableBufferPointer { reader.read($0.baseAddress, size: 188) }, 188)
+        try await waitUntil { server.completed.contains("/seg1.ts") }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertFalse(server.requests.contains { $0.path == "/seg2.ts" }, "the next request waits for the reader")
+
+        let rest = Self.drain(reader)
+        XCTAssertEqual(188 + rest.count, (89_000 + 300 + 300) * 188)
+        XCTAssertEqual(server.connectionCount, 1)
+    }
+
     func testStalledBodyFailsWithWhatHadArrived() async throws {
         let server = try XCTUnwrap(KeepAliveOrigin())
         defer { server.stop() }

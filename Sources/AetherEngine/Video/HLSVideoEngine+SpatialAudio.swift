@@ -61,7 +61,9 @@ extension HLSVideoEngine {
     /// markers, so the label misses some DTS:X, and a DTS-HD MA track that turns out not to be DTS:X
     /// is refused before the bridge is built (`buildSpatialAudioProducerIfEligible`). 48 kHz, or not
     /// yet known, since TrueHD reports its rate from the first frame and both formats are only ever
-    /// authored at 48 kHz. Nil as well when the build lacks the source's decoder trait.
+    /// authored at 48 kHz. Nil as well when the build lacks the source's decoder trait, and for DTS
+    /// when the layout does not carry DTS:X's 7.1 bed and four heights one to one (see
+    /// `SpatialSpeakerLayout.carriesDTSXOneToOne`).
     static func spatialRenderingLayout(
         rendering: ObjectAudioRendering,
         codecID: AVCodecID,
@@ -72,6 +74,10 @@ extension HLSVideoEngine {
               objectAudioSource(codecID: codecID, profile: profile)?.isBuiltIn == true,
               sampleRate == 0 || sampleRate == Int32(ObjectAudioRendering.sampleRate)
         else { return nil }
+        if objectAudioSource(codecID: codecID, profile: profile) == .dtsHDMasterAudio,
+           !layout.carriesDTSXOneToOne {
+            return nil
+        }
         return layout
     }
 
@@ -163,6 +169,13 @@ extension HLSVideoEngine {
                         category: .session
                     )
                 }
+            } else if par.codec_id == AV_CODEC_ID_DTS, let layout = objectAudioRendering.layout,
+                      !layout.carriesDTSXOneToOne {
+                EngineLog.emit(
+                    "[HLSVideoEngine] DTS:X is rendered into 7.1.4 or 9.1.6 only, not \(layout.rawValue); "
+                    + "keeping the channel bridge",
+                    category: .session
+                )
             } else if par.codec_id == AV_CODEC_ID_DTS, objectAudioRendering != .off {
                 // Lossy DTS has no DTS:X to render; only the lossless profiles are offered to LibDTSX.
                 EngineLog.emit(
@@ -310,7 +323,7 @@ extension HLSVideoEngine {
             case .trueHDAtmos:
                 rendering = "channel presentation split into \(layout.rawValue) by the objects' energy"
             case .dtsHDMasterAudio:
-                rendering = "bed, heights and objects rendered into \(layout.rawValue)"
+                rendering = "bed and heights routed one to one into \(layout.rawValue)"
             }
             EngineLog.emit(
                 "[HLSVideoEngine] \(source.name): \(rendering), delivered as \(bridge.hlsCodecs) (lossy)",

@@ -24,6 +24,13 @@ the public-API contract.
   layout's rears as well as its sides, and the split's 2048-frame latency is drained at the end of
   input and before every encoder restart. The exact render it is measured against is only built with
   the measurement-only `TrueHDReferenceRender` trait (#731).
+- **DTS:X plays its standard presentation only, into 7.1.4 or 9.1.6.** With LibDTSX 3.0, the heights
+  are removed from the 7.1 bed by the standard's own constant (each at -3 dB in the speaker under it)
+  instead of the gains the stream's metadata states, which is no longer read; on twelve DTS:X tracks
+  every frame stated exactly that fold, so the output is bit-identical. The alternate presentations,
+  which carry objects (some IMAX-labelled streams), are refused and play as 7.1, and DTS:X is rendered
+  only into the two layouts that carry the bed and the four heights one to one; any other layout
+  keeps the channel bridge. The object position mapping and the fold renderer are gone (#744).
 - **The documentation no longer says TrueHD Atmos objects are always lost.** The Known limitations
   entry in `docs/formats.md`, the `AudioDelivery.bridged` reference and the channel bridge's notes
   predate `objectAudioRendering` (#731) and said objects and heights never survive. They now say the

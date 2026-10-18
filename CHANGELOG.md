@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Fixed
+
+- Native loopback buffered position keeps updating while paused, using the existing wall-clock sampler and the real contiguous segment frontier. Cache holes, eviction and display-axis changes remain visible without advancing playback.
+
 ### Changed
 
 - **The documentation no longer says TrueHD Atmos objects are always lost.** The Known limitations

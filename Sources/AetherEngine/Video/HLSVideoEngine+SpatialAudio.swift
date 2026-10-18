@@ -3,11 +3,18 @@ import AetherLibavformat
 import AetherLibavcodec
 import AetherLibavutil
 
-/// Measurement only: with this environment variable set to 1, TrueHD Atmos is decoded exactly and
-/// its objects mixed into the layout, the rendering `BedSplitter` is compared against.
+/// Measurement only, in a build with the TrueHDReferenceRender trait: with this environment variable
+/// set to 1, TrueHD Atmos is decoded exactly and its objects mixed into the layout, the rendering
+/// `BedSplitter` is compared against. Without the trait it is always off and that path is not built.
 enum TrueHDReferenceRender {
     static let variable = "AETHER_TRUEHD_REFERENCE_RENDER"
-    static var isOn: Bool { ProcessInfo.processInfo.environment[variable] == "1" }
+    static var isOn: Bool {
+        #if TrueHDReferenceRender
+        ProcessInfo.processInfo.environment[variable] == "1"
+        #else
+        false
+        #endif
+    }
 }
 
 extension HLSVideoEngine {

@@ -40,7 +40,11 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
     private let hold = ObjectMetadataHold()
     private var lent: ObjectMetadataHold.Copy?
 
+    /// `splitsBed` is false only for the measurement reference (`TrueHDReferenceRender` trait).
     init(splitsBed: Bool = true) throws {
+        #if !TrueHDReferenceRender
+        precondition(splitsBed, "the exact decode and mix are only built with the TrueHDReferenceRender trait")
+        #endif
         guard let handle = truehd_atmos_decoder_create(TRUEHD_ATMOS_PRESENTATION_HIGHEST) else {
             throw DecoderError(status: TRUEHD_ATMOS_ERR_INVALID_ARGUMENT, message: "create failed")
         }
@@ -201,7 +205,11 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
     }
 
     private func state(for element: TrueHDAtmosElement) -> ObjectAudioElementState {
+        #if TrueHDReferenceRender
         splitsBed ? Self.pointSource(for: element) : Self.state(for: element)
+        #else
+        Self.pointSource(for: element)
+        #endif
     }
 
     /// An element as a point at its position: no size, snap, zone exclusion, screen anchoring or
@@ -213,6 +221,8 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
         return ObjectAudioElementState(position: SIMD3(p.0, p.1, max(0, p.2)), gain: active ? element.gain : 0)
     }
 
+    #if TrueHDReferenceRender
+    // The reference render's mapping: size, snap, zones, screen anchoring and the elevation switch.
     static func state(for element: TrueHDAtmosElement) -> ObjectAudioElementState {
         let active = element.flags & TRUEHD_ATMOS_ELEMENT_ACTIVE != 0
         var p = element.position
@@ -264,5 +274,6 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
         default: return []
         }
     }
+    #endif
 }
 #endif

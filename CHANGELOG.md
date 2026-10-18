@@ -12,6 +12,15 @@ the public-API contract.
 
 ### Changed
 
+- **TrueHD Atmos is built from the stream's own channel presentation.** With `objectAudioRendering`
+  in a `TrueHDObjectAudio` build, every output is now a share of the 7.1 (or 5.1) bed Dolby renders
+  the same mix into, split per frequency bin between floor and heights by where the objects' energy
+  lies (`BedSplitter`). No object signal is mixed into an output; the objects are decoded without
+  their matrix interpolation and taken as points. Measured against the previous exact render through
+  Apple's APAC decode it places the same energy within a few percent, with the heights within a
+  fraction of a dB. Needs LibTrueHD 3.0 (bed companion, per-handle interpolation switch). A 5.1 bed
+  now covers a 7.1 layout's rears as well as its sides. `AETHER_TRUEHD_REFERENCE_RENDER=1` keeps the
+  exact render for measurements (#731).
 - **The documentation no longer says TrueHD Atmos objects are always lost.** The Known limitations
   entry in `docs/formats.md`, the `AudioDelivery.bridged` reference and the channel bridge's notes
   predate `objectAudioRendering` (#731) and said objects and heights never survive. They now say the

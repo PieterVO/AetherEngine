@@ -21,6 +21,17 @@ struct ObjectAudioDecodedBlock {
     var planes: [UnsafePointer<Float>]
     /// Metadata taking effect inside this block, sorted by frame offset.
     var updates: [ObjectAudioMetadataUpdate]
+    /// The stream's channel-based presentation of the same frames (Dolby's own 7.1 or 5.1 rendering
+    /// of the mix), when the decoder carries one: see `BedSplitter`.
+    var bed: ObjectAudioBed?
+}
+
+/// A channel bed decoded alongside an object presentation, sample-aligned with it.
+struct ObjectAudioBed {
+    /// One per plane: `.bed`, `.fixed` or `.lfe`, never `.object`.
+    var roles: [ObjectAudioRole]
+    /// `frameCount` frames each, borrowed like the block's planes.
+    var planes: [UnsafePointer<Float>]
 }
 
 /// A decoder that turns an object-audio bitstream (TrueHD with Atmos, DTS:X) into signals plus the

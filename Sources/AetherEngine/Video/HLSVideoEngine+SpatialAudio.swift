@@ -3,6 +3,13 @@ import AetherLibavformat
 import AetherLibavcodec
 import AetherLibavutil
 
+/// Measurement only: with this environment variable set to 1, TrueHD Atmos is decoded exactly and
+/// its objects mixed into the layout, the rendering `BedSplitter` is compared against.
+enum TrueHDReferenceRender {
+    static let variable = "AETHER_TRUEHD_REFERENCE_RENDER"
+    static var isOn: Bool { ProcessInfo.processInfo.environment[variable] == "1" }
+}
+
 extension HLSVideoEngine {
 
     /// The object-audio format a source would be rendered as, before it is confirmed.
@@ -203,7 +210,7 @@ extension HLSVideoEngine {
             switch source {
             case .trueHDAtmos:
                 #if TrueHDObjectAudio
-                decoder = try TrueHDObjectAudioDecoder()
+                decoder = try TrueHDObjectAudioDecoder(splitsBed: !TrueHDReferenceRender.isOn)
                 #else
                 return nil
                 #endif
@@ -289,11 +296,17 @@ extension HLSVideoEngine {
                 : "DTS:X → APAC \(layout.rawValue)"
             audioDelivery = .bridged
             audioIsAPAC = true
+            let rendering: String
+            switch source {
+            case .trueHDAtmos where TrueHDReferenceRender.isOn:
+                rendering = "objects rendered into \(layout.rawValue) (reference render, \(TrueHDReferenceRender.variable))"
+            case .trueHDAtmos:
+                rendering = "channel presentation split into \(layout.rawValue) by the objects' energy"
+            case .dtsHDMasterAudio:
+                rendering = "bed, heights and objects rendered into \(layout.rawValue)"
+            }
             EngineLog.emit(
-                "[HLSVideoEngine] \(source.name): "
-                + (source == .trueHDAtmos ? "objects" : "bed, heights and objects")
-                + " rendered into \(layout.rawValue), delivered as \(bridge.hlsCodecs) (lossy; the lossless "
-                + (source == .trueHDAtmos ? "7.1 channel presentation" : "7.1 downmix") + " is not used)",
+                "[HLSVideoEngine] \(source.name): \(rendering), delivered as \(bridge.hlsCodecs) (lossy)",
                 category: .session
             )
             return producer

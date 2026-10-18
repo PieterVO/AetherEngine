@@ -1905,6 +1905,8 @@ public final class HLSVideoEngine: @unchecked Sendable {
                     category: .session
                 )
             }
+            resolveUnlabelledTrueHDAtmos(
+                audioStream: audioStream, audioDemuxer: audioDem, streamIndex: audioStreamIndex)
             let compat = AudioCodecCompat.from(codecID)
             // HE-AAC needs bridging only when there is no ASC (live ADTS/MPEG-TS): synthesized ASC
             // would declare LC at the SBR output rate, decoded as garbage by AudioToolbox (-11821).

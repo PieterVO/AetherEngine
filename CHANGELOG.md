@@ -10,6 +10,13 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The persistent HTTP/1.1 HLS ingest checks FIFO headroom before every segment and key request.**
+  The gap closed in 7.40.0 only covered a clear segment whose last chunk filled the buffer; after an
+  AES-128 segment the next key and segment request still went out over the ceiling. Seek, close,
+  cancellation and a failed reader retire the wait (#832, thanks @orut34iop).
+
 ### Changed
 
 - **With object rendering on and no audio track tagged with a language, TrueHD Atmos or DTS:X replaces

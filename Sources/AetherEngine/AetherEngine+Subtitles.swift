@@ -1366,6 +1366,21 @@ extension AetherEngine {
 
     // MARK: - External subtitle tracks (#88)
 
+    /// Implicit media headers belong only to the media's exact HTTP origin. Explicit
+    /// sidecar headers (including an empty dictionary) are the host's own decision.
+    nonisolated static func resolvedSubtitleHeaders(
+        for url: URL, explicit: [String: String]?, mediaURL: URL?,
+        mediaHeaders: [String: String]
+    ) -> [String: String] {
+        if let explicit { return explicit }
+        guard let mediaURL, let scheme = mediaURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.scheme?.lowercased() == scheme,
+              RedirectHeaderPolicy.credentialsAllowed(from: mediaURL, to: url)
+        else { return [:] }
+        return mediaHeaders
+    }
+
     /// Register an external subtitle file as a first-class track (AetherEngine#88): it appears in
     /// `subtitleTracks` with a synthetic id and `isExternal == true` and is selectable via
     /// `selectSubtitleTrack(index:)`. Overlay-only (no native WebVTT rendition / PiP); declare via
@@ -1459,7 +1474,7 @@ extension AetherEngine {
             table: nativeSubtitleTrackTable,
             registry: externalSubtitleRegistry,
             stores: session.nativeSubtitleCueStoresForSession,
-            defaultHeaders: loadedOptions.httpHeaders)
+            defaultHeaders: loadedOptions.httpHeaders, mediaURL: loadedURL)
         guard !jobs.isEmpty else { return }
         externalNativeStoreFillTask = BlockingWork.detached(priority: .utility) { [jobs] in
             for job in jobs {
@@ -1512,7 +1527,7 @@ extension AetherEngine {
         if activeSecondaryExternalSubtitleTrackID == id { clearSecondarySubtitle() }
     }
 
-    /// Fetch and decode a sidecar subtitle file (.srt / .ass / .vtt / .ssa) via `SubtitleDecoder.decodeFile`, replacing `subtitleCues` atomically. `httpHeaders` nil forwards `LoadOptions.httpHeaders` (same auth as the media, #32). Prefer registering via `addExternalSubtitleTrack` + `selectSubtitleTrack` (#88), which keeps the track listed and `activeSubtitleTrackIndex` populated; this API stays for compatibility and one-shot use.
+    /// Fetch and decode a sidecar subtitle file (.srt / .ass / .vtt / .ssa) via `SubtitleDecoder.decodeFile`, replacing `subtitleCues` atomically. `httpHeaders` nil inherits `LoadOptions.httpHeaders` only for the same HTTP scheme, host and effective port as the media; cross-origin sidecars need explicit headers. Prefer registering via `addExternalSubtitleTrack` + `selectSubtitleTrack` (#88), which keeps the track listed and `activeSubtitleTrackIndex` populated; this API stays for compatibility and one-shot use.
     public func selectSidecarSubtitle(url: URL, httpHeaders: [String: String]? = nil) {
         hostExplicitSubtitleAction = true
         startSidecarDecode(url: url, httpHeaders: httpHeaders, externalTrackID: nil)
@@ -1546,7 +1561,9 @@ extension AetherEngine {
         sidecarASSHeader = nil
         isLoadingSubtitles = true
 
-        let effectiveHeaders = httpHeaders ?? loadedOptions.httpHeaders
+        let effectiveHeaders = Self.resolvedSubtitleHeaders(
+            for: url, explicit: httpHeaders, mediaURL: loadedURL,
+            mediaHeaders: loadedOptions.httpHeaders)
         // ASS/SSA sidecars honour preserveASSMarkup so hosts can drive a styled renderer. SRT/VTT fall back to plain text regardless.
         let preserveASS = loadedOptions.preserveASSMarkup
         sidecarTask = Task { [weak self] in
@@ -1612,7 +1629,9 @@ extension AetherEngine {
         pgsStaleArrivalGates[.secondary]?.reset()   // #100
         isLoadingSecondarySubtitles = true
 
-        let effectiveHeaders = httpHeaders ?? loadedOptions.httpHeaders
+        let effectiveHeaders = Self.resolvedSubtitleHeaders(
+            for: url, explicit: httpHeaders, mediaURL: loadedURL,
+            mediaHeaders: loadedOptions.httpHeaders)
         secondarySidecarTask = Task { [weak self] in
             let result: SidecarDecodeResult
             do {
@@ -2257,7 +2276,7 @@ extension AetherEngine {
         table: [NativeSubtitleTrackEntry],
         registry: [Int: ExternalSubtitleTrack],
         stores: [NativeSubtitleCueStore],
-        defaultHeaders: [String: String]
+        defaultHeaders: [String: String], mediaURL: URL? = nil
     ) -> [ExternalSubtitleFillJob] {
         struct Key: Hashable {
             let url: URL
@@ -2270,7 +2289,9 @@ extension AetherEngine {
             // .sup at load would violate the selection gating).
             guard !entry.needsOCR, let extID = entry.externalID,
                   let track = registry[extID], ordinal < stores.count else { continue }
-            let key = Key(url: track.url, headers: track.httpHeaders ?? defaultHeaders)
+            let key = Key(url: track.url, headers: resolvedSubtitleHeaders(
+                for: track.url, explicit: track.httpHeaders, mediaURL: mediaURL,
+                mediaHeaders: defaultHeaders))
             if targetsByKey[key] == nil { order.append(key) }
             targetsByKey[key, default: []].append(
                 .init(streamIndex: track.sourceStreamIndex, store: stores[ordinal]))

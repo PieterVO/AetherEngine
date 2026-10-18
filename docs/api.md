@@ -1378,3 +1378,13 @@ Public for the CLI, the test suite, or a diagnostic overlay, and outside the sha
 - **Dolby Vision Profile 7 FEL tooling** (`@_spi(Diagnostics)`): `FelProbeResult` / `felDecodeProbe` (`aetherctl feltest`) and `felResidualEnabled` (`aetherctl play --cycle-el`), which exist only with the `DualLayerDolbyVision` trait, `DoviRpuSurvey` / `DoviRpuSurveyResult` / `DoviRpuFrameSurvey` / `doviRpuSurvey` (`aetherctl dvsurvey`), and, in `DEBUG` builds with the `DualLayerDolbyVision` trait only, `armDolbyVisionPinTest` / `dolbyVisionPinIsArmed` / `dolbyVisionPinIsActive` (`aetherctl play --dv-pin`). Hosts import none of them; the host surface of the FEL route is `LoadOptions.preferDualLayerDolbyVision` and, in `SessionReloadRefusal`, the new case `.dualLayerRouteNeedsFreshLoad`. See [Dolby Vision FEL](dolby-vision-fel.md) and [CLI](cli.md).
 - **`HLSLiveIngestReader`'s internals** (`terminalError`, `upstreamTargetDuration`, `observedLiveCadenceSeconds`, `closedLiveCadenceSeconds`, `upstreamSegmentDurationSeconds`, `companionAudioReader`): fixture and diagnostic reads. The last two are the closed evidence the served TARGETDURATION is sealed from (AE#447); `upstreamTargetDuration` is the upstream's own claim, reported in the seal line and derived from nowhere.
 - **`SubtitleChannel`**: the primary / secondary selector on the engine's internal subtitle routing. No public signature takes one; a host picks the channel by calling the primary or the secondary method.
+
+### Secondary subtitles across audio rebuilds
+
+An active registered secondary subtitle survives an audio-track rebuild through its original
+registry id, including `ExternalSubtitleTrack.httpHeaders` and `sourceStreamIndex`. A one-shot
+secondary sidecar still restores through its URL. Switching to an embedded secondary track
+clears the previous sidecar URL. Internal teardown clears active secondary identity while the
+rebuild's saved selection can restore it; a decode result from an older load cannot republish
+cues or loading state in the new one. This does not add bitmap/ASS capabilities or prohibit
+selecting the same track in both channels.

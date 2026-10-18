@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Fixed
+
+- Audio-switch rebuilds restore a registered secondary subtitle through its track id, preserving its explicit headers and container stream index. Embedded selection clears stale sidecar state, internal teardown clears the active external id, and late secondary decode completions cannot publish into another load generation. No subtitle capability or primary/secondary selection restrictions change.
+
 ### Changed
 
 - **The documentation no longer says TrueHD Atmos objects are always lost.** The Known limitations

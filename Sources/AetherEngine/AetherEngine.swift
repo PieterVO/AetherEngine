@@ -7828,6 +7828,7 @@ public final class AetherEngine: ObservableObject {
         nativeSubtitleRenditionAvailable = false
         cancelSidecarTask(channel: .secondary)
         activeSecondaryEmbeddedSubtitleStreamIndex = -1
+        activeSecondaryExternalSubtitleTrackID = nil
         loadedSecondarySidecarURL = nil
         isSecondarySubtitleActive = false
         secondarySubtitleCues = []

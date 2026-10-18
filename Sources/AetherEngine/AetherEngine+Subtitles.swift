@@ -191,6 +191,7 @@ extension AetherEngine {
         activeSecondaryExternalSubtitleTrackID = nil
         guard loadedURL != nil else { return }
         cancelSidecarTask(channel: .secondary)
+        loadedSecondarySidecarURL = nil
 
         // #112 rework: secondary embedded tracks ride the same packet-store drainer on their
         // own channel; the immediate tick backfills it.
@@ -1603,6 +1604,21 @@ extension AetherEngine {
         startSecondarySidecarDecode(url: url, httpHeaders: httpHeaders)
     }
 
+    /// Audio rebuilds keep the registry. Restore through its id so headers and a container's
+    /// selected subtitle stream survive; the URL-only route is only for one-shot sidecars.
+    func restoreSecondarySubtitleAfterRebuild(externalID: Int?, sidecarURL: URL?,
+                                              embeddedIndex: Int32, startAt: Double) {
+        if let sidecarURL {
+            if let externalID, externalSubtitleRegistry[externalID] != nil {
+                selectSecondarySubtitleTrack(index: externalID, startAt: startAt)
+            } else {
+                selectSecondarySidecarSubtitle(url: sidecarURL)
+            }
+        } else if embeddedIndex >= 0 {
+            selectSecondarySubtitleTrack(index: Int(embeddedIndex), startAt: startAt)
+        }
+    }
+
     /// Shared secondary sidecar-decode start (#88): the pre-#88 selectSecondarySidecarSubtitle body.
     func startSecondarySidecarDecode(url: URL, httpHeaders: [String: String]?,
                                      sourceStreamIndex: Int32? = nil) {
@@ -1613,6 +1629,7 @@ extension AetherEngine {
         isLoadingSecondarySubtitles = true
 
         let effectiveHeaders = httpHeaders ?? loadedOptions.httpHeaders
+        let sessionGeneration = loadGeneration
         secondarySidecarTask = Task { [weak self] in
             let result: SidecarDecodeResult
             do {
@@ -1622,13 +1639,15 @@ extension AetherEngine {
             } catch {
                 EngineLog.emit("[AetherEngine] secondary sidecar decode failed: \(error)", category: .engine)
                 await MainActor.run {
-                    guard !Task.isCancelled, let self = self else { return }
+                    guard !Task.isCancelled, let self = self,
+                          self.loadGeneration == sessionGeneration else { return }
                     if self.isSecondarySubtitleActive { self.isLoadingSecondarySubtitles = false }
                 }
                 return
             }
             await MainActor.run {
-                guard !Task.isCancelled, let self = self else { return }
+                guard !Task.isCancelled, let self = self,
+                          self.loadGeneration == sessionGeneration else { return }
                 guard self.isSecondarySubtitleActive else { return }
                 self.secondarySubtitleCues = result.cues
                 self.isLoadingSecondarySubtitles = false

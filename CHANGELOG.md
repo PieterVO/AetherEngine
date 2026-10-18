@@ -22,6 +22,8 @@ the public-API contract.
 
 ### Added
 
+- Optional session-cache byte budgets reuse existing volume and multi-session safeguards. A separate diagnostics snapshot reports effective bytes, protected playback-window overflow and typed cleanup results. Cache state is sampled off-main and old-session updates are rejected; defaults and live DVR policy remain unchanged.
+
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
   `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /
   `DTSXObjectAudio` traits; without them it stays nil), the 1 Hz snapshot carries an

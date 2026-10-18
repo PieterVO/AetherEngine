@@ -45,6 +45,15 @@ final class SoftwarePlaybackHost {
     }()
 
 
+    /// Zero still needs a working spool; every choice retains the volume and shared-claim clamp.
+    nonisolated static func packetCacheBudgetBytes(requestedBytes: Int?, availableBytes: Int64?,
+                                                   capRelaxed: Bool) -> Int {
+        let budget = HLSVideoEngine.resolveSessionCacheBudget(
+            requestedBytes: requestedBytes, volumeAvailableBytes: availableBytes, capRelaxed: capRelaxed)
+        return min(budget.volumeSafetyLimitBytes,
+                   budget.baseEffectiveBytes > 0 ? budget.baseEffectiveBytes : 32 << 20)
+    }
+
     // MARK: - Published state (mirrors NativeAVPlayerHost surface)
 
     /// Frames enqueued on the display layer; read by LiveTelemetrySampler at 1 Hz for observed FPS. Lock-guarded (demux thread writes, main-actor reads).
@@ -998,7 +1007,8 @@ final class SoftwarePlaybackHost {
         isLive: Bool = false,
         dvrWindowSeconds: Double? = nil,
         dvrRetention: SoftwareDVRRetentionOptions? = nil,
-        forwardBufferSegments: Int? = nil
+        forwardBufferSegments: Int? = nil,
+        sessionCacheByteBudget: Int? = nil
     ) async throws {
         self.demuxer = dem
         self.duration = dem.duration
@@ -1334,7 +1344,8 @@ final class SoftwarePlaybackHost {
                         .volumeAvailableCapacity.map(Int64.init)
                     let capRelaxed = HLSVideoEngine.retentionCapRelaxed(forwardWindowSegments: segments)
                     let diskClaim = RetentionClaims.shared.claim(volumeAvailableBytes: available) {
-                        HLSVideoEngine.sessionRetentionBudgetBytes(volumeAvailableBytes: $0, capRelaxed: capRelaxed)
+                        Self.packetCacheBudgetBytes(requestedBytes: sessionCacheByteBudget,
+                                                    availableBytes: $0, capRelaxed: capRelaxed)
                     }
                     bytes = diskClaim.bytes
                     guard bytes > 0 else { return nil }

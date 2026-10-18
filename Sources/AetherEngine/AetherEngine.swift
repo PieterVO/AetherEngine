@@ -2123,6 +2123,9 @@ public final class AetherEngine: ObservableObject {
     /// dismissal. A superseded load throws CancellationError at the first checkpoint.
     var loadGeneration: UInt64 = 0
 
+    /// Separates cache lifecycle callbacks from superseding sessions.
+    var sessionCacheStatusToken: UInt64 = 0
+
     /// Distinct across engine instances and refreshed whenever teardown invalidates preview work.
     public private(set) var scrubPreviewSourceGeneration = UUID()
 
@@ -4163,6 +4166,8 @@ public final class AetherEngine: ObservableObject {
         // (audio-only fast path, suppressed hosts); a load() that throws before routing leaves it for stop().
         claimSoftwarePathTakeover()   // AE#629
         stopInternal(resetDisplayCriteria: false, keepNativeHost: preserveNativeHost, keepCurrentItem: handOverInPlace)
+        sessionCacheStatusToken &+= 1
+        diagnostics.sessionCacheStatus = .inactive
         if mediaServicesWereReset { dropAudioPlayerHostAfterMediaServicesReset() }
         // #35/#93: a genuinely new item has not rendered yet; re-arm the cold-startup wedge suspension.
         // Scrub/seek/producer-restart never route through load(), so mid-stream #93 detection stays armed.
@@ -6593,7 +6598,8 @@ public final class AetherEngine: ObservableObject {
         releaseHeldPicture(reason: "stop")
         nextLoadRequestsInPlaceItemHandover = false
         stopInternal(resetDisplayCriteria: resetDisplayCriteria,
-                     finalTeardown: finalTeardown ?? resetDisplayCriteria)
+                     finalTeardown: finalTeardown ?? resetDisplayCriteria,
+                     cacheCleanupReason: .sessionStopped)
         state = .idle
         // #361: the sequence ends here without ever reaching its last checkpoint, which is the whole
         // point: nothing about a stop should read as a finished startup. Cleared in stop() and not in
@@ -7587,7 +7593,8 @@ public final class AetherEngine: ObservableObject {
     ///   never settles and burns the full settle timeout (~12 s of
     ///   black-screen latency per audio switch on the old fixed 5 s
     ///   poll; capped at ~2 s since #117, but still worth skipping).
-    func stopInternal(resetDisplayCriteria: Bool = true, keepNativeHost: Bool = false, keepCustomReader: Bool = false, keepCurrentItem: Bool = false, finalTeardown: Bool = false) {
+    func stopInternal(resetDisplayCriteria: Bool = true, keepNativeHost: Bool = false, keepCustomReader: Bool = false, keepCurrentItem: Bool = false, finalTeardown: Bool = false,
+                      cacheCleanupReason: SessionCacheCleanupReason = .sourceChanged) {
         // AE#560: a recording never outlives its session. This covers stop(), a new load() and
         // every reload, all of which pass through here before the demuxer goes away.
         endRecordingIfRunning(reason: .sessionEnded)
@@ -7664,7 +7671,10 @@ public final class AetherEngine: ObservableObject {
         // host has already retired for the next item. Only the session's slot is cleared; the engine
         // keeps the host's observer and re-arms the next session with it in load().
         nativeVideoSession?.setNativeVideoFrameTimeObserver(nil)
-        nativeVideoSession?.stop()
+        if diagnostics.sessionCacheStatus.route == .nativeRemoteHLS {
+            diagnostics.sessionCacheStatus = .inactive
+        }
+        nativeVideoSession?.stop(reason: cacheCleanupReason)
         nativeVideoSession = nil
         nativeSubtitleRenditionsServed = false
         dolbyVisionConversion = nil

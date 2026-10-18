@@ -22,6 +22,8 @@ the public-API contract.
 
 ### Added
 
+- Opt-in external subtitle preparation and single-use commit/discard: decode a bounded local text sidecar before changing the active selection. Configurable preparation limits and owner/session/selection-intent checks preserve the previous selection on failure; commit performs no file read.
+
 - Secondary ASS sidecars honor `preserveASSMarkup` and publish their own `secondarySidecarASSHeader`, independently cleared with the channel and rebuilt on reload. Default text/rich-text output is unchanged.
 
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While

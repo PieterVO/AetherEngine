@@ -10,7 +10,24 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Dolby Vision Profile 5 / 10.0 scrub previews in colour, drawn by the system compositor.**
+  `scrubPreviewDrawsInView`, `showScrubPreview(atSeconds:in:)` and `AetherScrubPreviewView`: the
+  keyframe that opens a resident segment becomes a one-sample fMP4, and a muted `AVPlayer` inside
+  the view shows it, so the colour comes from the same place as the playing picture rather than from
+  a reshaping of our own. Needs no `DolbyVisionStillReshaping` trait. Positions outside the resident
+  window read the segment's keyframe off the source with a side demuxer, as the I-frame rendition
+  does, and get the same gates (no read on a sequential, serial or held-connection origin, waits out a
+  seek, skips superseded requests); before, the preview only covered the cached span around the
+  playhead. 26 to 45 ms per new position on an M1, 18 to 25 ms for one read off a local source,
+  byte-identical to the source's keyframe; verified next to 4K Profile 5 playback on an Apple TV.
+- **The held picture of an audio switch covers Dolby Vision Profile 5 / 10.0 without the reshaping
+  trait.** The resident segment's video becomes a standalone file, and a player on the bound surface
+  seeks it frame-exactly to the outgoing position, so the compositor colours the held frame. It was
+  skipped before. On three Profile 5 clips the held frame is pixel-identical to the paused outgoing
+  picture, up in 165 to 220 ms on an M1. The offset adds the segment's B-frame delay; without it the
+  frame lands two frames early.
 
 ## [7.40.1] - 2026-10-18
 

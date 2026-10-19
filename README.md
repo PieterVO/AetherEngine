@@ -626,7 +626,7 @@ Browse all of this as a searchable site at **[aetherengine.superuser404.de](http
 - **[docs/api.md](docs/api.md)**: every public surface a host consumes, and the contracts that require it to act (how a load ends, `.ended`, the live retune, the audio tap, what must be set before `load`, and which FFmpeg your link hands the engine). A test fails the build when a host-facing public symbol is named nowhere in the docs.
 - **[docs/architecture.md](docs/architecture.md)**: the three playback pipelines, the source-file map, dependencies, the SwiftUI `Menu` pattern.
 - **[docs/formats.md](docs/formats.md)**: codec / container coverage, HDR routing, audio bridging, subtitles, frame extraction, disc playback, live ingest, and known limitations.
-- **[docs/cli.md](docs/cli.md)**: the `aetherctl` repro CLI (twenty-one subcommands).
+- **[docs/cli.md](docs/cli.md)**: the `aetherctl` repro CLI (twenty-four subcommands).
 - **[CHANGELOG.md](CHANGELOG.md)**: per-release index.
 
 ## Stability and versioning

@@ -10,6 +10,15 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Added
+
+- **`LoadOptions.displayCriteriaOwner` (`.engine` / `.avKit` / `.host`), AE#842.** `suppressDisplayCriteria`
+  means "AVKit writes the criteria", and every branch behind it waits for that write: a host that keeps
+  the panel in its system format (or writes rate-only criteria itself) had no correct setting and paid up
+  to a second of play-gate wait per HDR or Dolby Vision title for a write that never came, with the
+  engine's panel readout switched off. `.host` writes nothing, takes the brief budget, reads the panel
+  and still waits out a switch it observes. `suppressDisplayCriteria = true` keeps meaning `.avKit`.
+
 ### Fixed
 
 - **`confirmAtmos` no longer starves the video pump on an origin limited to one request.** Each

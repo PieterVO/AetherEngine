@@ -10,6 +10,14 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Added
+
+- **RealMedia, feature-phone 3GP, Theora and VobSub, through FFmpegBuild 3.8.0 (FFmpegBuild#7, thanks
+  @williamliu0516).** `.rm` / `.rmvb` (RealVideo 1-4 with every RealAudio the container carries), 3GP / 3G2
+  (H.263 with AMR), `.ogv` (Theora), DVD LPCM, and local VobSub `.idx` + `.sub` sidecars as external
+  subtitle tracks. `AudioCodecCompat` names the new audio as `realAudio` and `amr` (DVD LPCM as `pcm`),
+  all bridged; the video takes the software path.
+
 ### Fixed
 
 - **The persistent HTTP/1.1 HLS ingest checks FIFO headroom before every segment and key request.**

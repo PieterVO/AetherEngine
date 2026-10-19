@@ -10,7 +10,13 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **With object rendering on and no audio track tagged with a language, TrueHD Atmos or DTS:X replaces
+  the default track.** The fallback compared the default's language and had none to compare, so a file
+  that tags nothing (Dolby's Unfold demo) opened on its E-AC-3 JOC, and a host that remembered the
+  TrueHD pick paid a second load for the switch. One tagged track keeps the old behaviour: the file
+  names its dubs, and an untagged default is not matched by guess.
 
 ## [7.42.0] - 2026-10-19
 

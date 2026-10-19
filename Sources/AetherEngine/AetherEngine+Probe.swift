@@ -669,9 +669,15 @@ extension AetherEngine {
         // another dub, not another format of this one.
         guard prefersObjectAudio,
               let fallback = tracks.first(where: { $0.id == Int(defaultIndex) }),
-              !isRenderableObjectAudio(fallback),
-              let language = fallback.language
+              !isRenderableObjectAudio(fallback)
         else { return nil }
+        // With no track tagged at all (`und`, empty, none) there is nothing to tell dubs apart by, and
+        // demo discs like Dolby's Unfold tag nothing and list the E-AC-3 JOC as the probe's best stream.
+        // One tagged track is enough to show the file names its dubs, so the default then stays.
+        guard let language = fallback.language, LanguageTag(language) != nil else {
+            guard tracks.allSatisfy({ LanguageTag($0.language) == nil }) else { return nil }
+            return tracks.first(where: isRenderableObjectAudio).map { Int32($0.id) }
+        }
         let candidates = tracks.compactMap { track -> (track: TrackInfo, rank: Int)? in
             guard isRenderableObjectAudio(track),
                   let rank = languageMatchRank(track.language, language, kind: .audio),

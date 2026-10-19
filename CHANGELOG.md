@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.41.0] - 2026-10-19
+
 ### Added
 
 - **Dolby Vision Profile 5 / 10.0 scrub previews in colour, drawn by the system compositor.**

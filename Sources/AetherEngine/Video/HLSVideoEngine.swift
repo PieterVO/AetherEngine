@@ -1283,6 +1283,29 @@ public final class HLSVideoEngine: @unchecked Sendable {
     }
 
     public func start() throws -> URL {
+        try prepare()
+        return try serve(panelIsInHDRMode: panelIsInHDRMode)
+    }
+
+    /// What `prepare()` built and `serve(panelIsInHDRMode:)` needs (AE#348).
+    private struct PreparedServe {
+        let codecpar: UnsafeMutablePointer<AVCodecParameters>
+        let demuxer: Demuxer
+        let plan: [Segment]
+        let segmentCache: SegmentCache
+        let server: HLSLocalServer
+        let provider: VideoSegmentProvider
+        let frameRate: Double?
+        let servedAudioLanguage: String?
+        let servedAudioIsAtmosStreamCopy: Bool
+        let videoRange: HLSVideoRange
+        let dvVariant: DVVariant
+        let convertP7ToProfile81: Bool
+    }
+    private var preparedServe: PreparedServe?
+
+    /// The panel-independent half of `start()`; `serve(panelIsInHDRMode:)` finishes it.
+    public func prepare() throws {
         guard demuxer == nil else { throw HLSVideoEngineError.alreadyStarted }
 
         // 1. Open the source; reuse the pre-opened demuxer when available (saves ~1-3 s on slow CDN).
@@ -2241,6 +2264,36 @@ public final class HLSVideoEngine: @unchecked Sendable {
                 .pump, at: Double(plan[openIndex].startPts) * Double(tb.num) / Double(tb.den))
         }
         prod.start()
+        preparedServe = PreparedServe(
+            codecpar: codecpar, demuxer: dem, plan: plan, segmentCache: segmentCache, server: srv,
+            provider: prov, frameRate: frameRate, servedAudioLanguage: servedAudioLanguage,
+            servedAudioIsAtmosStreamCopy: servedAudioIsAtmosStreamCopy, videoRange: videoRange,
+            dvVariant: dvVariant, convertP7ToProfile81: convertP7ToProfile81)
+    }
+
+    /// Choose the playlist AVPlayer is handed, once the panel can answer for itself.
+    ///
+    /// AE#348: `prepare()` does everything that does not depend on the panel (open, segment plan, local
+    /// server, the producer cutting the first segments) and this does the one thing that does. Split so
+    /// a load can run `prepare()` while the panel is still switching and only this has to wait for it.
+    /// Reading `panelIsInHDRMode` mid-switch would route an HDR title as SDR for the whole session.
+    public func serve(panelIsInHDRMode: Bool) throws -> URL {
+        guard let prepared = preparedServe else {
+            throw HLSVideoEngineError.openFailed(reason: "serve() without a prepared session")
+        }
+        preparedServe = nil
+        let codecpar = prepared.codecpar
+        let dem = prepared.demuxer
+        let plan = prepared.plan
+        let segmentCache = prepared.segmentCache
+        let srv = prepared.server
+        let prov = prepared.provider
+        let frameRate = prepared.frameRate
+        let servedAudioLanguage = prepared.servedAudioLanguage
+        let servedAudioIsAtmosStreamCopy = prepared.servedAudioIsAtmosStreamCopy
+        let videoRange = prepared.videoRange
+        let dvVariant = prepared.dvVariant
+        let convertP7ToProfile81 = prepared.convertP7ToProfile81
 
         // URL routing: master playlist (VIDEO-RANGE=PQ + SUPPLEMENTAL-CODECS=dvh1) only when
         // the panel is already in HDR at load time (`panelIsInHDRMode`). A master claiming HDR
@@ -2961,6 +3014,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
     }
 
     public func stop() {
+        preparedServe = nil
         cancelResidentRangesPublish()
         // Sodalite#32: drop the tap routes first so a pump still draining its last packets no-ops
         // instead of decoding into stores being torn down.

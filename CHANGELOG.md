@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.42.0] - 2026-10-19
+
 ### Added
 
 - **`LoadOptions.displayCriteriaOwner` (`.engine` / `.avKit` / `.host`), AE#842.** `suppressDisplayCriteria`

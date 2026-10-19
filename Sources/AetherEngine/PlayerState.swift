@@ -743,7 +743,7 @@ public struct LoadOptions: Sendable, Equatable {
     /// this runs the same bounded decode pass as `AetherEngine.probeDetectingAtmos` (see `AtmosDetectionOptions`
     /// for the caps) on a second handle to the source, once per E-AC-3 track, and republishes `audioTracks` as
     /// tracks confirm. It starts only after the session is up and runs at utility priority, so it never delays
-    /// the first frame. Skipped for live sources and for forward-only custom readers, which cannot be re-read.
+    /// the first frame. Skipped for live sources, for forward-only custom readers, which cannot be re-read, and where a second request would cost the video path its link: an origin limited to one request (`maxConcurrentSourceRequests == 1`, or a limit the engine learned from 429/503/509 refusals, re-checked before every track), `sequentialOrigin` and `heldSourceConnection`. One `[AtmosConfirmation]` log line names the reason, or how far a stopped pass got.
     /// Default `false` (#214 follow-up).
     public var confirmAtmos: Bool = false
 

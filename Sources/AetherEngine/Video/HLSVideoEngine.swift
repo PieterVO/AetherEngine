@@ -263,6 +263,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
     private let compositorPreviewLock = NSLock()
     private var compositorPreviewFiles: [(identity: String, file: CompositorPreviewFile)] = []
     private var compositorPreviewSerial = 0
+    private var compositorHoldURL: URL?
     nonisolated static let compositorPreviewFileLimit = 12
     /// AE#682: the server withheld the JPEG I-frame playlist because AVPlayer never asked for a media
     /// segment, which is how a refused HDR variant looks next to an SDR I-frame rendition.
@@ -2251,8 +2252,8 @@ public final class HLSVideoEngine: @unchecked Sendable {
         previewNeedsCompositor = FrameDecodeContext.isDVNoBaseLayer(codecpar: codecpar)
         if !stillsAvailable {
             EngineLog.emit("[HLSVideoEngine] Dolby Vision Profile 5 / 10.0 stills are not built in "
-                           + "(DolbyVisionStillReshaping trait off): no scrub thumbnails, I-frame stills "
-                           + "or held pictures for this source", category: .session)
+                           + "(DolbyVisionStillReshaping trait off): no scrub thumbnails or I-frame stills; "
+                           + "scrub previews and the held picture go through the system compositor", category: .session)
         }
         // AE#682: decided before the routing below, because an I-frame rendition is one of the
         // reasons to serve a master at all.
@@ -2781,7 +2782,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
                 stagingDir: staging) else { return nil }
         let url = directory.appendingPathComponent("seg\(source.segmentIndex)-\(serial).mp4")
         guard (try? built.file.write(to: url)) != nil else { return nil }
-        let file = CompositorPreviewFile(url: url, startSeconds: source.startSeconds + built.keyframeOffsetSeconds,
+        let file = CompositorPreviewFile(url: url, startSeconds: source.startSeconds,
                                          durationSeconds: source.durationSeconds)
         compositorPreviewLock.lock()
         compositorPreviewFiles.append((source.identity, file))
@@ -2792,6 +2793,39 @@ public final class HLSVideoEngine: @unchecked Sendable {
         compositorPreviewLock.unlock()
         for old in evicted { try? FileManager.default.removeItem(at: old) }
         return file
+    }
+
+    /// The whole resident segment holding `seconds` as a video-only fMP4, and how far past the
+    /// segment's first frame `seconds` lies: what the held picture of an audio switch shows for a
+    /// source only the compositor colours. One file at a time; building the next removes the previous.
+    func compositorHoldFile(atSeconds seconds: Double) -> (url: URL, offsetSeconds: Double)? {
+        guard previewNeedsCompositor, !isLiveSession, seconds.isFinite,
+              let source = scrubThumbnailSource(atSeconds: seconds) else { return nil }
+        restartLock.lock()
+        let directory = cache?.sessionDir.appendingPathComponent("preview", isDirectory: true)
+        let tag = savedVideoConfig?.codecTagOverride
+        let color = savedVideoConfig?.colorOverride
+        restartLock.unlock()
+        guard let directory else { return nil }
+        let staging = directory.appendingPathComponent("hold-staging", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)) != nil,
+              let built = CompositorPreviewBuilder.build(
+                initData: source.initData, segmentURL: source.segmentURL,
+                durationSeconds: source.durationSeconds, codecTagOverride: tag, colorOverride: color,
+                stagingDir: staging, content: .wholeSegment) else { return nil }
+        compositorPreviewLock.lock()
+        compositorPreviewSerial += 1
+        let serial = compositorPreviewSerial
+        let previous = compositorHoldURL
+        compositorPreviewLock.unlock()
+        let url = directory.appendingPathComponent("hold\(source.segmentIndex)-\(serial).mp4")
+        guard (try? built.file.write(to: url)) != nil else { return nil }
+        compositorPreviewLock.lock()
+        compositorHoldURL = url
+        compositorPreviewLock.unlock()
+        if let previous { try? FileManager.default.removeItem(at: previous) }
+        let offset = min(max(0, seconds - source.startSeconds + built.compositionDelaySeconds), source.durationSeconds)
+        return (url, offset)
     }
 
     public func stop() {
@@ -2817,6 +2851,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
         cache = nil
         compositorPreviewLock.lock()
         compositorPreviewFiles.removeAll()
+        compositorHoldURL = nil
         compositorPreviewLock.unlock()
         let ab = audioBridge
         audioBridge = nil

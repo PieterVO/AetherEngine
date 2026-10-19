@@ -18,6 +18,12 @@ the public-API contract.
   the view shows it, so the colour comes from the same place as the playing picture rather than from
   a reshaping of our own. Needs no second connection and no `DolbyVisionStillReshaping` trait.
   26 to 45 ms per new position on an M1; verified next to 4K Profile 5 playback on an Apple TV.
+- **The held picture of an audio switch covers Dolby Vision Profile 5 / 10.0 without the reshaping
+  trait.** The resident segment's video becomes a standalone file, and a player on the bound surface
+  seeks it frame-exactly to the outgoing position, so the compositor colours the held frame. It was
+  skipped before. On three Profile 5 clips the held frame is pixel-identical to the paused outgoing
+  picture, up in 165 to 220 ms on an M1. The offset adds the segment's B-frame delay; without it the
+  frame lands two frames early.
 
 ## [7.40.1] - 2026-10-18
 

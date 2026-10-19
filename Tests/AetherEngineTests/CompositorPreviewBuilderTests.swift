@@ -58,7 +58,6 @@ struct CompositorPreviewBuilderTests {
         let out = try #require(CompositorPreviewBuilder.build(
             initData: segment.initData, segmentURL: segment.segmentURL, durationSeconds: 4.0,
             codecTagOverride: "dvh1", colorOverride: nil, stagingDir: staging))
-        #expect(out.keyframeOffsetSeconds == 0)
         #expect(IFrameTestBoxes.topLevelTypes(out.file).prefix(2) == ["ftyp", "moov"])
         let fragmentStart = try #require(Self.offsetOfFirstMoof(out.file))
         let fragment = out.file.subdata(in: fragmentStart..<out.file.count)

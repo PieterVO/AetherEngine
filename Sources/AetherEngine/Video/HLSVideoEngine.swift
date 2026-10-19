@@ -257,6 +257,13 @@ public final class HLSVideoEngine: @unchecked Sendable {
     /// False for a Dolby Vision Profile 5 / 10.0 source in a build without the
     /// `DolbyVisionStillReshaping` trait: none of its frames can become a correct still.
     private(set) var yieldsStills = true
+    /// Dolby Vision without a displayable base layer (Profile 5, AV1 Profile 10.0): only the system
+    /// compositor shows it in colour, so scrub previews go through `compositorPreviewFile`.
+    private(set) var previewNeedsCompositor = false
+    private let compositorPreviewLock = NSLock()
+    private var compositorPreviewFiles: [(identity: String, file: CompositorPreviewFile)] = []
+    private var compositorPreviewSerial = 0
+    nonisolated static let compositorPreviewFileLimit = 12
     /// AE#682: the server withheld the JPEG I-frame playlist because AVPlayer never asked for a media
     /// segment, which is how a refused HDR variant looks next to an SDR I-frame rendition.
     var iFrameRenditionWithheld: Bool { server?.iFrameRenditionWithheld ?? false }
@@ -2241,6 +2248,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
         let stillsAvailable = FrameDecodeContext.yieldsStill(
             dolbyVisionNoBaseLayer: FrameDecodeContext.isDVNoBaseLayer(codecpar: codecpar))
         yieldsStills = stillsAvailable
+        previewNeedsCompositor = FrameDecodeContext.isDVNoBaseLayer(codecpar: codecpar)
         if !stillsAvailable {
             EngineLog.emit("[HLSVideoEngine] Dolby Vision Profile 5 / 10.0 stills are not built in "
                            + "(DolbyVisionStillReshaping trait off): no scrub thumbnails, I-frame stills "
@@ -2735,6 +2743,57 @@ public final class HLSVideoEngine: @unchecked Sendable {
                                     initData: initData, segmentURL: seg.fileURL)
     }
 
+    struct CompositorPreviewFile: Sendable {
+        let url: URL
+        /// Output-axis seconds of the keyframe the file shows.
+        let startSeconds: Double
+        let durationSeconds: Double
+    }
+
+    /// A single-keyframe fMP4 for the resident segment holding `seconds` (playlist/output axis), built
+    /// once per segment identity and kept for the last `compositorPreviewFileLimit` segments. Nil
+    /// for sources a still covers, live sessions, and segments that are not resident.
+    func compositorPreviewFile(atSeconds seconds: Double) -> CompositorPreviewFile? {
+        guard previewNeedsCompositor, !isLiveSession,
+              let source = scrubThumbnailSource(atSeconds: seconds) else { return nil }
+        compositorPreviewLock.lock()
+        if let hit = compositorPreviewFiles.firstIndex(where: { $0.identity == source.identity }) {
+            let entry = compositorPreviewFiles.remove(at: hit)
+            compositorPreviewFiles.append(entry)
+            compositorPreviewLock.unlock()
+            return entry.file
+        }
+        compositorPreviewSerial += 1
+        let serial = compositorPreviewSerial
+        compositorPreviewLock.unlock()
+
+        restartLock.lock()
+        let directory = cache?.sessionDir.appendingPathComponent("preview", isDirectory: true)
+        let tag = savedVideoConfig?.codecTagOverride
+        let color = savedVideoConfig?.colorOverride
+        restartLock.unlock()
+        guard let directory else { return nil }
+        let staging = directory.appendingPathComponent("staging", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)) != nil,
+              let built = CompositorPreviewBuilder.build(
+                initData: source.initData, segmentURL: source.segmentURL,
+                durationSeconds: source.durationSeconds, codecTagOverride: tag, colorOverride: color,
+                stagingDir: staging) else { return nil }
+        let url = directory.appendingPathComponent("seg\(source.segmentIndex)-\(serial).mp4")
+        guard (try? built.file.write(to: url)) != nil else { return nil }
+        let file = CompositorPreviewFile(url: url, startSeconds: source.startSeconds + built.keyframeOffsetSeconds,
+                                         durationSeconds: source.durationSeconds)
+        compositorPreviewLock.lock()
+        compositorPreviewFiles.append((source.identity, file))
+        var evicted: [URL] = []
+        while compositorPreviewFiles.count > Self.compositorPreviewFileLimit {
+            evicted.append(compositorPreviewFiles.removeFirst().file.url)
+        }
+        compositorPreviewLock.unlock()
+        for old in evicted { try? FileManager.default.removeItem(at: old) }
+        return file
+    }
+
     public func stop() {
         cancelResidentRangesPublish()
         // Sodalite#32: drop the tap routes first so a pump still draining its last packets no-ops
@@ -2756,6 +2815,9 @@ public final class HLSVideoEngine: @unchecked Sendable {
         server = nil
         let c = cache
         cache = nil
+        compositorPreviewLock.lock()
+        compositorPreviewFiles.removeAll()
+        compositorPreviewLock.unlock()
         let ab = audioBridge
         audioBridge = nil
         let d = demuxer

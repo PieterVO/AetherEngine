@@ -10,7 +10,14 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Dolby Vision Profile 5 / 10.0 scrub previews in colour, drawn by the system compositor.**
+  `scrubPreviewDrawsInView`, `showScrubPreview(atSeconds:in:)` and `AetherScrubPreviewView`: the
+  keyframe that opens a resident segment becomes a one-sample fMP4, and a muted `AVPlayer` inside
+  the view shows it, so the colour comes from the same place as the playing picture rather than from
+  a reshaping of our own. Needs no second connection and no `DolbyVisionStillReshaping` trait.
+  26 to 45 ms per new position on an M1; verified next to 4K Profile 5 playback on an Apple TV.
 
 ## [7.40.1] - 2026-10-18
 

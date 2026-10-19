@@ -718,20 +718,25 @@ struct PersistentHLSSegmentAdmissionTests {
     enum Exit: String, CaseIterable, Sendable { case consume, seek, close, cancel }
 
     @Test("a final chunk filling the FIFO holds the next request until consumption or retirement",
-          arguments: Exit.allCases, [false, true])
-    func finalChunkAdmission(exit: Exit, encryptedNext: Bool) async throws {
+          arguments: Exit.allCases, [nil, 1, 2])
+    func finalChunkAdmission(exit: Exit, encryptedFrom: Int?) async throws {
         let server = try #require(KeepAliveOrigin())
         defer { server.stop() }
         let segments = (0..<4).map { "seg\($0).ts" }
         // After the one 188-byte read below, these two segments leave 16,777,308 bytes:
         // just above the 16 MiB ceiling. The final offered chunk can empty `pending` while
-        // filling the FIFO, which used to skip append() and start the next request.
+        // filling the FIFO, which used to skip append() and start the next request. Encrypted from
+        // segment 1, the filling segment arrives whole through append() instead of stream().
         let packetCounts = [64_000, 25_242, 3, 3]
         let key = Data(repeating: 0x43, count: 16)
         var playlist = String(decoding: Issue732PersistentHTTP1Tests.mediaPlaylist(segments), as: UTF8.self)
-        if encryptedNext {
-            playlist = playlist.replacingOccurrences(of: "#EXTINF:6,\nseg2.ts",
-                with: "#EXT-X-KEY:METHOD=AES-128,URI=\"/key\",IV=0x00000000000000000000000000000000\n#EXTINF:6,\nseg2.ts")
+        if let encryptedFrom {
+            playlist = playlist.replacingOccurrences(of: "#EXTINF:6,\nseg\(encryptedFrom).ts",
+                with: "#EXT-X-KEY:METHOD=AES-128,URI=\"/key\",IV=0x00000000000000000000000000000000\n#EXTINF:6,\nseg\(encryptedFrom).ts")
+        }
+        // The key is fetched before its first segment, so it only marks an escape when that is seg2.
+        let nextRequest: @Sendable (KeepAliveOrigin.Request) -> Bool = { request in
+            request.path == "/seg2.ts" || (encryptedFrom == 2 && request.path == "/key")
         }
         let playlistBody = Data(playlist.utf8)
         server.route = { path in
@@ -744,7 +749,7 @@ struct PersistentHLSSegmentAdmissionTests {
             }
             let clear = Issue732PersistentHTTP1Tests.transportStream(
                 marker: UInt8(index), packets: packetCounts[index])
-            return .init(body: encryptedNext && index >= 2
+            return .init(body: encryptedFrom.map { index >= $0 } == true
                 ? Issue732PersistentHTTP1Tests.aes128CBC(clear, key: key) : clear)
         }
         let reader = try #require(try await HLSVODIngestReader.makeIfHEVCMPEGTS(
@@ -757,7 +762,7 @@ struct PersistentHLSSegmentAdmissionTests {
         #expect(try await firstRead.outcome().get() == 188)
         try await waitFor { server.completed.contains("/seg1.ts") }
         let escaped = try await waitFor(upTo: .milliseconds(500)) {
-            server.requests.contains { $0.path == "/seg2.ts" || $0.path == "/key" }
+            server.requests.contains(where: nextRequest)
         }
         #expect(!escaped, "the final chunk must not bypass the next request's admission")
 
@@ -793,7 +798,7 @@ struct PersistentHLSSegmentAdmissionTests {
             #expect(result.bytes == 0)
             #expect(result.terminal == -1)
             let lateRequest = try await waitFor(upTo: .milliseconds(500)) {
-                server.requests.contains { $0.path == "/seg2.ts" || $0.path == "/key" }
+                server.requests.contains(where: nextRequest)
             }
             #expect(!lateRequest, "a retired producer must not issue the next request")
         }

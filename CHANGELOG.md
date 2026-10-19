@@ -10,7 +10,16 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **`confirmAtmos` no longer starves the video pump on an origin limited to one request.** Each
+  E-AC-3 track's pass is a second handle on the source, and at `maxConcurrentSourceRequests = 1`
+  every read it made took the pump's only slot: an integrator measured stalls every ten seconds on a
+  4K remux with 17 E-AC-3 tracks behind an Xtream origin that answers a second connection with 509,
+  and the pass never finished. The pass is now declined there, and for `sequentialOrigin` and
+  `heldSourceConnection`, the same set the I-frame rendition declines; the budget is re-checked
+  before every track, so a limit learned from refusals mid-session stops it too. The
+  `[AtmosConfirmation]` line now also appears for a stopped pass, with how many tracks it reached.
 
 ## [7.40.1] - 2026-10-18
 

@@ -375,6 +375,15 @@ final class SoftwarePlaybackHost {
     /// advanced by the live feeder under `liveEdgeLock`, reset with the session.
     nonisolated(unsafe) private var liveJoinPolicy = SoftwareLiveJoinPolicy()
 
+    /// AE#813: the unit a live source delivers in, read on demand because a live ingest learns it
+    /// as segments arrive. Set by the engine before `load()`; nil for a continuous source.
+    nonisolated(unsafe) var liveDeliveryUnit: (@Sendable () -> Double?)?
+
+    /// AE#813: how far behind the newest media this live session holds.
+    nonisolated var liveHoldback: SoftwareLiveHoldback {
+        SoftwareLiveHoldback(deliveryUnitSeconds: liveDeliveryUnit?())
+    }
+
     /// Guards `sessionStartPts` / `newestSourcePts` against the demux
     /// thread writing while the main-actor time tick reads them.
     private let liveEdgeLock = NSLock()
@@ -2269,7 +2278,17 @@ final class SoftwarePlaybackHost {
                 guard self.sessionStartPts.isFinite, self.newestSourcePts.isFinite else { return nil }
                 return self.liveJoinPolicy.observe(firstPts: self.sessionStartPts,
                                                    newestPts: self.newestSourcePts,
-                                                   at: ProcessInfo.processInfo.systemUptime)
+                                                   at: ProcessInfo.processInfo.systemUptime,
+                                                   leadSeconds: self.liveHoldback.joinLeadSeconds)
+            }
+            let liveHoldback: @Sendable () -> SoftwareLiveHoldback = { [weak self] in
+                self?.liveHoldback ?? .continuous
+            }
+            let newestSourcePts: @Sendable () -> Double = { [weak self] in
+                guard let self else { return .nan }
+                self.liveEdgeLock.lock()
+                defer { self.liveEdgeLock.unlock() }
+                return self.newestSourcePts
             }
             let placeCursor: @Sendable (Int, UInt64) -> Bool = { [weak self] seq, generation in
                 self?.placeFeedCursor(seq, ifGeneration: generation) ?? false
@@ -2323,6 +2342,8 @@ final class SoftwarePlaybackHost {
                     advanceCursor: advanceCursor,
                     recoverCursor: recoverCursor,
                     liveJoinPlacement: liveJoinPlacement,
+                    liveHoldback: liveHoldback,
+                    newestSourcePts: newestSourcePts,
                     placeCursor: placeCursor,
                     seekGeneration: getSeekGeneration,
                     currentRate: currentRate,
@@ -2599,6 +2620,8 @@ final class SoftwarePlaybackHost {
         advanceCursor: @Sendable (Int) -> Void,
         recoverCursor: @Sendable (Int) -> Void,
         liveJoinPlacement: @Sendable () -> SoftwareLiveJoinPolicy.Decision? = { .fromStart },
+        liveHoldback: @Sendable () -> SoftwareLiveHoldback = { .continuous },
+        newestSourcePts: @Sendable () -> Double = { .nan },
         placeCursor: @Sendable (Int, UInt64) -> Bool = { _, _ in false },
         seekGeneration: @Sendable () -> UInt64,
         currentRate: @Sendable () -> Float,
@@ -2687,26 +2710,34 @@ final class SoftwarePlaybackHost {
             if clockArmed(), isPlaying(), readCursor() >= ring.seqBounds.first,
                seekGeneration() == feederGeneration {
                 let lastPTS = audioLookahead.lastFedAudioPTS
-                let lead = lastPTS.isFinite ? lastPTS - aOut.currentTimeSeconds : 0
+                let clock = aOut.currentTimeSeconds
+                let lead = lastPTS.isFinite ? lastPTS - clock : 0
+                let newest = newestSourcePts()
+                let ahead = newest.isFinite ? newest - clock : 0
+                let cushion = liveHoldback().resumeCushionSeconds
                 switch AudioLookaheadPolicy.clockAction(
                     rebuffering: rebuffering,
                     lastFedAudioPTS: lastPTS,
-                    clockSeconds: aOut.currentTimeSeconds,
+                    clockSeconds: clock,
                     atRingEnd: audioLookahead.current >= ring.seqBounds.end,
-                    sourceEnded: sourceEnded()
+                    sourceEnded: sourceEnded(),
+                    bufferedAheadSeconds: ahead,
+                    resumeCushionSeconds: cushion
                 ) {
                 case .pauseForRebuffer:
                     rebuffering = true
+                    let resumesAt = cushion.map { ", resumes at \(String(format: "%.1f", $0))s ahead" } ?? ""
                     EngineLog.emit(
                         "[SWHost] live source underrun: pausing clock to rebuffer "
-                        + "(lead=\(String(format: "%.2f", lead))s)",
+                        + "(lead=\(String(format: "%.2f", lead))s\(resumesAt))",
                         category: .swPlayback
                     )
                     aOut.pause()
                 case .resume:
                     rebuffering = false
                     EngineLog.emit(
-                        "[SWHost] rebuffered: resuming clock (lead=\(String(format: "%.2f", lead))s)",
+                        "[SWHost] rebuffered: resuming clock (lead=\(String(format: "%.2f", lead))s "
+                        + "ahead=\(String(format: "%.2f", ahead))s)",
                         category: .swPlayback
                     )
                     aOut.setRate(currentRate())
@@ -2771,13 +2802,15 @@ final class SoftwarePlaybackHost {
                     liveJoinPending = false
                 case .place(let targetPts)?:
                     liveJoinPending = false
+                    let holdback = liveHoldback()
+                    let unit = holdback.deliveryUnitSeconds.map { String(format: "%.1f", $0) + "s" } ?? "continuous"
                     let cursor = readCursor()
                     if let seq = ring.seq(forKeyframeAtOrBefore: targetPts), seq > cursor,
                        let keyframe = ring.packet(atSeq: seq), placeCursor(seq, generation) {
                         let skipped = keyframe.pts - (ring.packet(atSeq: cursor)?.pts ?? keyframe.pts)
                         EngineLog.emit(
-                            "[SWHost] live join placed \(String(format: "%.1f", SoftwareLiveJoinPolicy.leadSeconds))s "
-                            + "behind the newest media: skipped \(String(format: "%.1f", skipped))s of the "
+                            "[SWHost] live join placed \(String(format: "%.1f", holdback.joinLeadSeconds))s "
+                            + "behind the newest media (delivery unit \(unit)): skipped \(String(format: "%.1f", skipped))s of the "
                             + "connect burst (cursor seq=\(cursor) -> \(seq), keyframe pts=\(String(format: "%.2f", keyframe.pts)))",
                             category: .swPlayback
                         )

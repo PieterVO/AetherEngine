@@ -10,7 +10,15 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **A live HLS channel on the software path no longer stalls once per segment (#813).** The software
+  live join placed the picture 4 s behind the newest media, which suits a continuous TS panel but ran
+  dry before every segment of a source that delivers 10 s at a time, and the rebuffer resumed the
+  moment the late segment landed, so the stall repeated. The holdback now follows the segment length
+  (`1.5 x segment + 1 s`, 16 s on 10 s segments, at most 45 s): the join and Return to Live use it,
+  the live-edge verdict allows it plus one segment, and a rebuffer resumes once a segment plus 2 s stands ahead of the clock.
+  Continuous sources are unchanged.
 
 ## [7.44.0] - 2026-10-20
 

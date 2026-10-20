@@ -5955,7 +5955,10 @@ public final class AetherEngine: ObservableObject {
             ? (liveLanding?.sessionTarget ?? seconds)
             : max(0, min(seconds, duration))
         if isLive, softwareHost != nil, nativeHost == nil, let window = liveWindow {
-            let landing = Self.softwareLiveLanding(requested: target, window: window)
+            let landing = Self.softwareLiveLanding(
+                requested: target, window: window,
+                holdbackSeconds: softwareHost?.liveHoldback.landingHoldbackSeconds
+                    ?? AudioLookaheadPolicy.rebufferResumeLeadSeconds)
             if landing < target {
                 EngineLog.emit(
                     "[AetherEngine] #104 SW live landing held \(String(format: "%.2f", target - landing))s "

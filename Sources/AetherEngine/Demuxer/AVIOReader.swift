@@ -4768,9 +4768,12 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
         return Int(min(declaredLength, ceiling))
     }
 
-    /// #255 test hook: the largest up-front body reservation any chunk fetch has asked for since the
-    /// last reset. Written on the delegate queue, read once the fetch it belongs to has completed.
-    nonisolated(unsafe) static var peakBodyReserveForTesting = 0
+    /// #255 test hook: the largest up-front body reservation any of THIS reader's chunk fetches has
+    /// asked for. Per reader, not process-wide, so a suite running in parallel cannot raise it.
+    /// Lock-protected; raised from each fetch's delegate.
+    var peakBodyReserveForTesting: Int { peakBodyReserveLock.withLock { peakBodyReserve } }
+    private let peakBodyReserveLock = NSLock()
+    private var peakBodyReserve = 0
 
     private func requestTicket(for url: URL, label: String,
                                timeout: TimeInterval, shouldAbort: (() -> Bool)? = nil,
@@ -4841,6 +4844,10 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
                                           bodyLimit: Self.expectedBodyBytes(for: request))
         let task = (probeRequestSession ?? Self.chunkSession).dataTask(with: request)
         task.delegate = delegate
+        delegate.onBodyReserve = { [weak self] reserve in
+            guard let self else { return }
+            self.peakBodyReserveLock.withLock { self.peakBodyReserve = max(self.peakBodyReserve, reserve) }
+        }
 
         let semaphore = DispatchSemaphore(value: 0)
         delegate.onCompletion = { [weak self] response in
@@ -5287,6 +5294,8 @@ private final class ChunkFetchDelegate: NSObject, URLSessionDataDelegate, @unche
     var truncated = false
     var onCompletion: ((HTTPURLResponse?) -> Void)?
     var onResolved: ((URL) -> Void)?
+    /// Reports the up-front reservation each response asked for (#255 test hook).
+    var onBodyReserve: ((Int) -> Void)?
 
     init(extraHeaders: [String: String], bodyLimit: Int?) {
         self.extraHeaders = extraHeaders
@@ -5323,8 +5332,7 @@ private final class ChunkFetchDelegate: NSObject, URLSessionDataDelegate, @unche
         if let http = response as? HTTPURLResponse {
             let reserve = AVIOReader.bodyReservation(
                 declaredLength: http.expectedContentLength, limit: bodyLimit)
-            AVIOReader.peakBodyReserveForTesting = max(
-                AVIOReader.peakBodyReserveForTesting, reserve)
+            onBodyReserve?(reserve)
             if reserve > 0 { body.reserveCapacity(reserve) }
             let status = http.statusCode
             if status == 200 || status == 206,

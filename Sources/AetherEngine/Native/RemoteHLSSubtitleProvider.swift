@@ -41,7 +41,7 @@ final class RemoteHLSSubtitleProvider: HLSSegmentProvider, @unchecked Sendable {
     private let vttFillWaitSeconds: TimeInterval
 
     init(tracks: [Track], masterBody: String, programDuration: Double,
-         defaultHeaders: [String: String], mediaURL: URL? = nil,
+         defaultHeaders: [String: String], mediaURL: URL?,
          vttFillWaitSeconds: TimeInterval = defaultVTTFillWaitSeconds) {
         self.tracks = tracks
         self.staticMasterPlaylistBody = masterBody
@@ -129,7 +129,7 @@ final class RemoteHLSSubtitleProvider: HLSSegmentProvider, @unchecked Sendable {
     /// `AetherEngine.externalSubtitleFillJobs`, which keys off the loopback's rendition table.
     static func fillJobs(tracks: [Track],
                          stores: [NativeSubtitleCueStore],
-                         defaultHeaders: [String: String], mediaURL: URL? = nil) -> [AetherEngine.ExternalSubtitleFillJob] {
+                         defaultHeaders: [String: String], mediaURL: URL?) -> [AetherEngine.ExternalSubtitleFillJob] {
         struct Key: Hashable {
             let url: URL
             let headers: [String: String]

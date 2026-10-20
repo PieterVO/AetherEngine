@@ -2276,7 +2276,7 @@ extension AetherEngine {
         table: [NativeSubtitleTrackEntry],
         registry: [Int: ExternalSubtitleTrack],
         stores: [NativeSubtitleCueStore],
-        defaultHeaders: [String: String], mediaURL: URL? = nil
+        defaultHeaders: [String: String], mediaURL: URL?
     ) -> [ExternalSubtitleFillJob] {
         struct Key: Hashable {
             let url: URL

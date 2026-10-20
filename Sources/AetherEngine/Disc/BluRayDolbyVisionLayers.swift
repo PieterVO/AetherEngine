@@ -112,3 +112,48 @@ struct BluRayDolbyVisionLayers {
         return true
     }
 }
+
+/// Pairs each base-layer picture with the RPU of the enhancement unit that has its PTS, in read order. A base
+/// picture waits until its RPU is in; an RPU that comes first waits for its picture. Generic over the held unit so
+/// the demuxer holds its packets and the tests hold plain values.
+struct DolbyVisionLayerPairing<Unit> {
+    /// How many base pictures may wait before the oldest goes out without an RPU.
+    static var holdLimit: Int { 8 }
+
+    private var held: [(unit: Unit, pts: Int64, ready: Bool)] = []
+    private var earlyRPUs: [Int64: [UInt8]] = [:]
+
+    var heldCount: Int { held.count }
+
+    /// A base-layer picture. `attach` appends an RPU to it and returns whether that worked.
+    mutating func addBase(_ unit: Unit, pts: Int64, attach: (Unit, [UInt8]) -> Bool) {
+        var ready = false
+        if let rpu = earlyRPUs.removeValue(forKey: pts) { ready = attach(unit, rpu) }
+        held.append((unit, pts, ready))
+    }
+
+    /// An enhancement unit's RPU: completes the waiting base picture with its PTS, or waits for it. The early
+    /// RPUs are bounded too, the lowest PTS goes first.
+    mutating func addRPU(_ rpu: [UInt8], pts: Int64, attach: (Unit, [UInt8]) -> Bool) {
+        if let i = held.firstIndex(where: { !$0.ready && $0.pts == pts }) {
+            held[i].ready = attach(held[i].unit, rpu)
+            return
+        }
+        if earlyRPUs.count >= Self.holdLimit * 2, let oldest = earlyRPUs.keys.min() { earlyRPUs[oldest] = nil }
+        earlyRPUs[pts] = rpu
+    }
+
+    /// The oldest base picture, once its RPU is in, once more than `holdLimit` wait, or at the end of the source;
+    /// nil while it may still be completed. `paired` is false for a picture that goes out without an RPU.
+    mutating func release(atEnd: Bool = false) -> (unit: Unit, paired: Bool)? {
+        guard let head = held.first, head.ready || atEnd || held.count > Self.holdLimit else { return nil }
+        held.removeFirst()
+        return (head.unit, head.ready)
+    }
+
+    /// Everything still waiting, for the caller to free (a seek, a reopen, close).
+    mutating func drain() -> [Unit] {
+        defer { held = []; earlyRPUs = [:] }
+        return held.map(\.unit)
+    }
+}

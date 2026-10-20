@@ -5191,7 +5191,8 @@ public final class AetherEngine: ObservableObject {
             preferDualLayerDolbyVision: options.preferDualLayerDolbyVision,
             isLive: options.isLive,
             isSourceSeekable: dualLayerSeekable,
-            canHardwareDecode: opensHardwareHEVC) == nil {
+            canHardwareDecode: opensHardwareHEVC,
+            enhancementLayerInPackets: !probe.foldsBluRayDolbyVisionLayers) == nil {
             let vIdx = probe.videoStreamIndex
             elType = await BlockingWork.detached(priority: .userInitiated) { [probe] in
                 let result = DolbyVisionRecordAudit.probeEnhancementLayerType(demuxer: probe, streamIndex: vIdx)
@@ -5213,7 +5214,8 @@ public final class AetherEngine: ObservableObject {
             isSourceSeekable: dualLayerSeekable,
             canHardwareDecode: opensHardwareHEVC,
             elType: elType,
-            geometry: dualLayerGeometry)
+            geometry: dualLayerGeometry,
+            enhancementLayerInPackets: !probe.foldsBluRayDolbyVisionLayers)
         if let line = dualLayerDecision.logLine {
             EngineLog.emit(line, category: .engine)
         }

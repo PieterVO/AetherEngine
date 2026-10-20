@@ -32,6 +32,7 @@ the public-API contract.
   load-time seeks, and a rewind that does not land makes the sample inconclusive, so the declared
   field order stands.
 - Native loopback buffered position keeps updating while paused, using the existing wall-clock sampler and the real contiguous segment frontier. Cache holes, eviction and display-axis changes remain visible without advancing playback.
+- External subtitles inherit media request headers only at the same HTTP scheme, host and effective port. Explicit subtitle headers remain authoritative, including an empty set. Primary/secondary overlays, native subtitle stores and remote-HLS sidecar renditions use the same initial-request rule; existing redirect and certificate policies are unchanged.
 
 ### Changed
 

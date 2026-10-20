@@ -68,7 +68,8 @@ struct RemoteHLSSubtitleProxyTests {
         let tracks = [Self.track(100_000, url: URL(string: "https://origin.test/en.srt")!)]
         let stores = tracks.map { _ in NativeSubtitleCueStore() }
         let jobs = RemoteHLSSubtitleProvider.fillJobs(tracks: tracks, stores: stores,
-                                                      defaultHeaders: ["Authorization": "Bearer x"])
+                                                      defaultHeaders: ["Authorization": "Bearer x"],
+                                                      mediaURL: URL(string: "https://origin.test/movie.m3u8"))
         #expect(jobs.first?.headers == ["Authorization": "Bearer x"])
     }
 

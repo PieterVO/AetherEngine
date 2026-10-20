@@ -1382,3 +1382,15 @@ Public for the CLI, the test suite, or a diagnostic overlay, and outside the sha
 - **Dolby Vision Profile 7 FEL tooling** (`@_spi(Diagnostics)`): `FelProbeResult` / `felDecodeProbe` (`aetherctl feltest`) and `felResidualEnabled` (`aetherctl play --cycle-el`), which exist only with the `DualLayerDolbyVision` trait, `DoviRpuSurvey` / `DoviRpuSurveyResult` / `DoviRpuFrameSurvey` / `doviRpuSurvey` (`aetherctl dvsurvey`), and, in `DEBUG` builds with the `DualLayerDolbyVision` trait only, `armDolbyVisionPinTest` / `dolbyVisionPinIsArmed` / `dolbyVisionPinIsActive` (`aetherctl play --dv-pin`). Hosts import none of them; the host surface of the FEL route is `LoadOptions.preferDualLayerDolbyVision` and, in `SessionReloadRefusal`, the new case `.dualLayerRouteNeedsFreshLoad`. See [Dolby Vision FEL](dolby-vision-fel.md) and [CLI](cli.md).
 - **`HLSLiveIngestReader`'s internals** (`terminalError`, `upstreamTargetDuration`, `observedLiveCadenceSeconds`, `closedLiveCadenceSeconds`, `upstreamSegmentDurationSeconds`, `companionAudioReader`): fixture and diagnostic reads. The last two are the closed evidence the served TARGETDURATION is sealed from (AE#447); `upstreamTargetDuration` is the upstream's own claim, reported in the seal line and derived from nowhere.
 - **`SubtitleChannel`**: the primary / secondary selector on the engine's internal subtitle routing. No public signature takes one; a host picks the channel by calling the primary or the secondary method.
+
+### External subtitle request headers
+
+When an external subtitle has no explicit `httpHeaders`, media headers are inherited only if
+its URL has the same HTTP scheme, host and effective port as the media URL. An omitted default
+port equals an explicit default port; a scheme change, including HTTP to HTTPS, is a different
+origin for this initial sidecar request. Unknown media origins and local files inherit nothing.
+This applies to primary and secondary overlays, native subtitle cue-store fills and remote-HLS
+sidecar renditions. Set `ExternalSubtitleTrack.httpHeaders` or the sidecar call's `httpHeaders`
+explicitly for a subtitle server requiring authentication at another origin. An explicit empty
+dictionary disables inheritance. Redirects still follow the existing redirect-header policy,
+and certificate trust still uses `EngineTLS.serverTrustEvaluator` independently.

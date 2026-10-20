@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.43.0] - 2026-10-20
+
 ### Added
 
 - **RealMedia, feature-phone 3GP, Theora and VobSub, through FFmpegBuild 3.8.0 (FFmpegBuild#7, thanks
@@ -32,6 +36,17 @@ the public-API contract.
   that tags nothing (Dolby's Unfold demo) opened on its E-AC-3 JOC, and a host that remembered the
   TrueHD pick paid a second load for the switch. One tagged track keeps the old behaviour: the file
   names its dubs, and an untagged default is not matched by guess.
+- **A VOD load produces its first segments while the panel switches into HDR or Dolby Vision (#348,
+  thanks @badrabbit).** After an HDR/DV criteria write the session start used to wait out the pre-flight
+  gate, so on a title whose first two segments took 2.0 s to cut, playback began 1.5 s after a switch that
+  had already ended. `HLSVideoEngine.start()` is now `prepare()` (open, segment plan, local server,
+  producer) plus `serve(panelIsInHDRMode:)` (the master-or-media choice), and only `serve` waits for the
+  gate, which still starts at the write, so the panel is never read earlier than before. Measured on an
+  Apple TV 4K with a Dolby Vision Profile 8.1 title: server up 74 ms after the write, every segment cut
+  inside the 2.9 s switch, `playing` 218 ms after it ended. Live loads and Profile 7 sources that may take
+  the dual-layer route keep the serial order, and a hardware-decode refusal taken mid-switch is asked
+  again once the panel has settled. The cap line no longer claims "most likely already in the target
+  mode" for a switch the gate saw start.
 
 ## [7.42.0] - 2026-10-19
 

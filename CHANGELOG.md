@@ -31,6 +31,7 @@ the public-API contract.
   that stalled there held the load. It now uses `seekBounded` with the same 5 s budget as the other
   load-time seeks, and a rewind that does not land makes the sample inconclusive, so the declared
   field order stands.
+- Native loopback buffered position keeps updating while paused, using the existing wall-clock sampler and the real contiguous segment frontier. Cache holes, eviction and display-axis changes remain visible without advancing playback.
 
 ### Changed
 

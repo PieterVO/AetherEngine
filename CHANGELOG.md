@@ -25,6 +25,22 @@ the public-API contract.
   landed 5 s late. The chapters are now rebased per backend onto the seek axis, a pre-roll chapter
   that ends before the content starts is dropped, and the software host predicts its session zero at
   load, so a seek before the first `play()` converts on the same axis.
+- **The rewind after the load-time interlace sample is bounded (thanks @pkajaba, from #807).** The
+  sample that checks a declared interlaced field order (#232) moved the read position of the demuxer
+  the session reuses and seeked back with the plain seek, which has no deadline, so a remote source
+  that stalled there held the load. It now uses `seekBounded` with the same 5 s budget as the other
+  load-time seeks, and a rewind that does not land makes the sample inconclusive, so the declared
+  field order stands.
+
+### Changed
+
+- `aetherctl play` rejects `--no-fel` and `--no-dual-layer` as stray flags. They were accepted as no-ops
+  since 7.37.0 for scripts written when `play` turned the dual-layer route on by itself.
+
+### Tests and CI
+
+- `SoftwarePacketMemoryFIFOTests` blocks a thread and now runs off the cooperative pool, so the
+  one-thread CI step cannot starve the other suites on it.
 
 ## [7.44.0] - 2026-10-20
 

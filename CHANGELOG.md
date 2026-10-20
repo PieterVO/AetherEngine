@@ -179,6 +179,11 @@ the public-API contract.
   bed as lossy APAC that tvOS sends to an Atmos receiver as Dolby MAT. No behaviour change (#802,
   thanks @aravindhsampath).
 
+- **Purgeable-history test determinism.** Check the no-eviction case while packets
+  are unread; consumed history may already have been emptied by the kernel before
+  the test requests a purge. Eviction, stale-cursor refusal and unread data checks
+  remain intact. No packet-store behavior changes.
+
 ### Added
 
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While

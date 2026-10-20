@@ -179,10 +179,13 @@ the public-API contract.
   bed as lossy APAC that tvOS sends to an Atmos receiver as Dolby MAT. No behaviour change (#802,
   thanks @aravindhsampath).
 
-- **Purgeable-history test determinism.** Check the no-eviction case while packets
-  are unread; consumed history may already have been emptied by the kernel before
-  the test requests a purge. Eviction, stale-cursor refusal and unread data checks
-  remain intact. No packet-store behavior changes.
+- **The memory packet store's history tests no longer race the kernel (#819, thanks @yucelokan).**
+  Consumed chunks are volatile VM, so under a full suite's memory pressure the kernel could empty
+  them between a test's `pop()` and its next line, failing a cursor restore, a still walk or a
+  seek-back hit at random. An internal `kernelMayPurge: false` on `SoftwarePacketMemoryFIFO` keeps
+  that history resident at the kernel level while every count and state transition still treats it
+  as volatile, so only `purgeHistoryForTesting` empties it. The tests that re-read history use it,
+  the purge and residency tests keep real kernel purging. No change to the store in playback.
 
 ### Added
 

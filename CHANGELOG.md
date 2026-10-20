@@ -10,7 +10,18 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **DTS:X is decoded by FFmpeg's own `dca` decoder; LibDTSX is gone (#798).** FFmpegBuild 3.9.0 patches
+  the decoder to read the height channel set of DTS:X's standard presentation, which upstream recognises
+  but skips, and with its `x_heights` option outputs 7.1.4 with the -3 dB fold removed from the bed.
+  `DTSXObjectAudio` therefore links no library of its own, and an App Store app no longer ships
+  LibDTSX's LGPL-3.0 framework, which it could not distribute without an exception. Same
+  presentations as before (standard 7.1.4 rendered, the ones with objects play as 7.1), same priming,
+  same channel order. The output matches LibDTSX within half a 24-bit LSB, except where the folded bed
+  went past full scale: LibDTSX clipped it before removing the fold, FFmpeg's path does not. The
+  verdict now waits for up to eight frames before refusing, so a stream entered inside a peak-bit-rate
+  smoothing period is not refused on its lossy first frames.
 
 ## [7.43.0] - 2026-10-20
 

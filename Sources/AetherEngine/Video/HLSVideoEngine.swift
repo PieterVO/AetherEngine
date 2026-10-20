@@ -586,7 +586,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
     /// `AtmosOutputActivator` beside the player to reach the receiver as Atmos.
     var audioIsAPAC = false
 
-    /// LibDTSX confirmed the playing track as DTS:X (#744), whatever FFmpeg's profile label said. The
+    /// The DTS:X decoder confirmed the playing track as DTS:X (#744), whatever FFmpeg's profile label said. The
     /// engine folds it into the published track's `isDTSX`.
     var audioIsConfirmedDTSX = false
 
@@ -1987,7 +1987,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
                              .map { layout in
                                  Self.objectAudioSource(codecID: acpForHE.codec_id, profile: acpForHE.profile) == .trueHDAtmos
                                      ? "Atmos object render into \(layout.rawValue), APAC"
-                                     : "DTS:X render into \(layout.rawValue) if LibDTSX confirms DTS:X, APAC"
+                                     : "DTS:X render into \(layout.rawValue) if its first frame decodes as DTS:X, APAC"
                              }
                              ?? Self.encoderLabel(AudioBridge.bridgeEncoder(
                                 for: audioBridgeMode,

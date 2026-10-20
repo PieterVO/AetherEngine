@@ -2448,7 +2448,7 @@ public final class AetherEngine: ObservableObject {
     var confirmedAtmosStreamIndices: Set<Int32> = []
     var confirmedAtmosSource: URL?
 
-    /// #744 follow-up: the stream indices LibDTSX confirmed as DTS:X while they played, keyed to their
+    /// #744 follow-up: the stream indices the DTS:X decoder confirmed as DTS:X while they played, keyed to their
     /// source like the Atmos ledger above and republished through `applyConfirmedTrackFlags()`.
     var confirmedDTSXStreamIndices: Set<Int32> = []
     var confirmedDTSXSource: URL?

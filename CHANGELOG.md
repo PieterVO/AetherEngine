@@ -19,6 +19,12 @@ the public-API contract.
   (`1.5 x segment + 1 s`, 16 s on 10 s segments, at most 45 s): the join and Return to Live use it,
   the live-edge verdict allows it plus one segment, and a rebuffer resumes once a segment plus 2 s stands ahead of the clock.
   Continuous sources are unchanged.
+- **A container chapter seek lands on the chapter when the source does not start at 0 (#815, thanks
+  @pkajaba).** `mediaChapters` carried the container's own chapter times, while `seek(to:)` and
+  `currentTime` count from the container start, so on a source starting at 5 s every chapter seek
+  landed 5 s late. The chapters are now rebased per backend onto the seek axis, a pre-roll chapter
+  that ends before the content starts is dropped, and the software host predicts its session zero at
+  load, so a seek before the first `play()` converts on the same axis.
 
 ## [7.44.0] - 2026-10-20
 

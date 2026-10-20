@@ -344,7 +344,7 @@ player.$discChapters                           // [ChapterInfo] for the selected
 player.selectChapter(id: chapterID)            // seek to a chapter (disc chapters only)
 
 // Container chapters (Matroska / MP4; empty for disc sources, which publish discChapters instead)
-player.$mediaChapters                          // [ChapterInfo]; startSeconds are seek(to:) timestamps
+player.$mediaChapters                          // [ChapterInfo]; startSeconds are seek(to:) values, 0-based like currentTime
 
 // Info panel / Now Playing (iOS / tvOS)
 player.setExternalMetadata([ AVMetadataItem(/* title, artwork, etc. */) ])

@@ -7534,14 +7534,16 @@ public final class AetherEngine: ObservableObject {
     /// publishes once it is.
     func republishMediaChapters() {
         guard let source = containerChapterSource, playbackBackend != .none else {
-            mediaChapters = []
+            if !mediaChapters.isEmpty { mediaChapters = [] }
             return
         }
         let origin = PresentationAxis.containerChapterOrigin(
             backend: playbackBackend, formatStartSeconds: source.formatStartSeconds,
             sourceStartOrigin: source.sourceStartOrigin, softwareClockZero: softwareClockSessionZero,
             isLive: isLive)
-        mediaChapters = Demuxer.chapterInfos(source, origin: origin)
+        // Every reopen of the same source settles the backend again; an unchanged list must not re-fire.
+        let rebased = Demuxer.chapterInfos(source, origin: origin)
+        if rebased != mediaChapters { mediaChapters = rebased }
     }
 
     /// Seek to a chapter within the active disc title. `id` is a `ChapterInfo.id` from `discChapters`. A thin

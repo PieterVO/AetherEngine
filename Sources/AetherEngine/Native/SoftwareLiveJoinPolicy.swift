@@ -50,8 +50,10 @@ struct SoftwareLiveJoinPolicy: Equatable {
     private var windowStartAt: TimeInterval?
 
     /// Notes the ring's first and newest PTS at `now` (seconds on any monotonic clock); nil while the
-    /// burst is still landing, then the decision, once.
-    mutating func observe(firstPts: Double, newestPts: Double, at now: TimeInterval) -> Decision? {
+    /// burst is still landing, then the decision, once. `leadSeconds` is the source's join lead,
+    /// `SoftwareLiveHoldback.joinLeadSeconds` (AE#813).
+    mutating func observe(firstPts: Double, newestPts: Double, at now: TimeInterval,
+                          leadSeconds: Double = Self.leadSeconds) -> Decision? {
         guard let firstObservedAt, let windowStartPts, let windowStartAt else {
             self.firstObservedAt = now
             self.windowStartPts = newestPts
@@ -72,7 +74,77 @@ struct SoftwareLiveJoinPolicy: Equatable {
         }
         guard settled else { return nil }
         let span = newestPts - firstPts
-        guard span.isFinite, span >= Self.leadSeconds + Self.minimumSkipSeconds else { return .fromStart }
-        return .place(targetPts: newestPts - Self.leadSeconds)
+        guard span.isFinite, span >= leadSeconds + Self.minimumSkipSeconds else { return .fromStart }
+        return .place(targetPts: newestPts - leadSeconds)
+    }
+}
+
+/// AE#813: how far behind the newest media a software live session holds, from the unit its source
+/// delivers in.
+///
+/// `SoftwareLiveJoinPolicy.leadSeconds` suits a continuous TS panel that hands over about a second at
+/// a time. A live HLS ingest hands over a whole segment at a time, so on 10 s segments a 4 s lead ran
+/// dry before the next segment landed: measured on an iPhone, `live source underrun` once per segment,
+/// the audio lead falling 4 -> 3 -> 2 -> 1 -> 0 between them. The rebuffer then resumed at
+/// `AudioLookaheadPolicy.rebufferResumeLeadSeconds` of audio, which the late segment supplies the
+/// moment it lands, so the playhead never gained a cushion and the stall repeated on every segment.
+///
+/// So where the unit is known, the session holds one and a half units plus a second behind the newest
+/// media (the ingest joins with the same `1.5 x` cover for the same reason), a rebuffer resumes only
+/// once more than a unit stands ahead of the clock, a landing near the frontier is held back as far as
+/// a join, and the live-edge verdict counts that distance plus one unit as the edge. A continuous source has no unit
+/// and keeps every value it had before.
+struct SoftwareLiveHoldback: Equatable, Sendable {
+    /// Seconds of media the source delivers at once, nil for a continuous source.
+    let deliveryUnitSeconds: Double?
+
+    static let continuous = SoftwareLiveHoldback(deliveryUnitSeconds: nil)
+
+    /// Upper bound on the join lead, whatever the unit.
+    static let maximumLeadSeconds: Double = 45
+    /// Margin over one unit before a rebuffer resumes.
+    static let resumeSlackSeconds: Double = 2
+
+    init(deliveryUnitSeconds: Double?) {
+        if let unit = deliveryUnitSeconds, unit.isFinite, unit > 0 {
+            self.deliveryUnitSeconds = unit
+        } else {
+            self.deliveryUnitSeconds = nil
+        }
+    }
+
+    /// Where a join starts behind the newest media: 4 s for a continuous source, 4 s on 2 s segments,
+    /// 10 s on 6 s segments, 16 s on 10 s segments.
+    var joinLeadSeconds: Double {
+        guard let unit = deliveryUnitSeconds else { return SoftwareLiveJoinPolicy.leadSeconds }
+        return Swift.min(Swift.max(SoftwareLiveJoinPolicy.leadSeconds, 1.5 * unit + 1), Self.maximumLeadSeconds)
+    }
+
+    /// How far behind the frontier a seek is held at least (Sodalite#104 round 3).
+    var landingHoldbackSeconds: Double {
+        deliveryUnitSeconds == nil ? AudioLookaheadPolicy.rebufferResumeLeadSeconds : joinLeadSeconds
+    }
+
+    /// Media that has to stand ahead of the clock before a rebuffer resumes, nil when the audio lead
+    /// alone decides (a continuous source).
+    var resumeCushionSeconds: Double? {
+        guard let unit = deliveryUnitSeconds else { return nil }
+        return Swift.min(unit + Self.resumeSlackSeconds, joinLeadSeconds)
+    }
+
+    /// The distance behind the frontier the live-edge verdict counts as the edge, nil for a
+    /// continuous source. One unit more than the lead: the lead is measured from the newest media at
+    /// the moment of placement, and the next segment can land right after it, so a session holding
+    /// the lead sits anywhere up to `lead + unit` behind (measured: 25.5 s after a landing at 17 s on
+    /// 10 s segments).
+    var edgeHoldbackSeconds: Double? {
+        deliveryUnitSeconds.map { joinLeadSeconds + $0 }
+    }
+
+    /// The unit a live ingest delivers in: the longest segment it served or the longest gap it has
+    /// closed between arrivals, whichever is larger. nil until either is known.
+    static func deliveryUnit(segmentDuration: Double?, closedCadence: Double?) -> Double? {
+        let known = [segmentDuration, closedCadence].compactMap { $0 }.filter { $0.isFinite && $0 > 0 }
+        return known.max()
     }
 }

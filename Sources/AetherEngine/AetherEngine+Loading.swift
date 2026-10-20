@@ -2017,6 +2017,13 @@ extension AetherEngine {
         host.preferDualLayerDolbyVision = loadedOptions.preferDualLayerDolbyVision
         host.elType = elType ?? sourceElType
         host.setAudioDelay(loadedOptions.audioDelaySeconds)   // AE#464: before the decoder opens
+        // AE#813: a live ingest delivers whole segments, and the host's holdback follows their length.
+        if isLive, let ingest = customReader as? LiveIngestSourceInfo {
+            host.liveDeliveryUnit = { [weak ingest] in
+                SoftwareLiveHoldback.deliveryUnit(segmentDuration: ingest?.upstreamSegmentDurationSeconds,
+                                                  closedCadence: ingest?.closedLiveCadenceSeconds)
+            }
+        }
         host.deinterlaceConfig = DeinterlaceConfig(
             mode: loadedOptions.deinterlaceMode,
             fieldRate: loadedOptions.deinterlaceFieldRate

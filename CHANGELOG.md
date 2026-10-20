@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.44.0] - 2026-10-20
+
 ### Changed
 
 - **DTS:X is decoded by FFmpeg's own `dca` decoder; LibDTSX is gone (#798).** FFmpegBuild 3.9.0 patches

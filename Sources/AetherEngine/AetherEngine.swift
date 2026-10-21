@@ -4250,6 +4250,9 @@ public final class AetherEngine: ObservableObject {
             // AE#678: the ingest fetches from the playlist's origin, not from `aether-custom://`.
             OriginRequestBudget.shared.setHostLimit(
                 options.maxConcurrentSourceRequests, for: ingest.budgetOriginURL)
+            if options.isLive {
+                ingest.setJoinCushion(LiveEdgePolicy.edgeCushion(options.liveEdgeCushionSeconds))
+            }
         }
         // #170: the carryover is consumed by THIS load only (registration site below, or never on
         // the branches that return before it); it must not persist into loadedOptions where a later

@@ -589,6 +589,7 @@ extension AetherEngine {
                       // owns the moment it is told to stop waiting.
                       liveJoinStartsImmediately: options.liveJoinStartsImmediately,
                       forwardBufferDuration: 0,
+                      liveEdgeOffsetSeconds: LiveEdgePolicy.edgeCushion(options.liveEdgeCushionSeconds),
                       // This lean path has no live-reopen / readiness watchdog; let AVPlayer's "gave up"
                       // signal surface a dead upstream (segment 404 / token expiry) so the host can retune.
                       surfaceEndFailures: true,
@@ -873,6 +874,7 @@ extension AetherEngine {
             sourceOpenPolicy: loadedOptions.sourceOpenPolicy,
             liveStartupGraceSeconds: loadedOptions.liveStartupGraceSeconds,
             liveStartupSingleSegmentMinimumSeconds: loadedOptions.liveStartupSingleSegmentMinimumSeconds,
+            liveEdgeCushionSeconds: loadedOptions.liveEdgeCushionSeconds,
             blockingReloadOverride: loadedOptions.liveBlockingReload,
             liveCadenceObservation: liveCadenceObservation,
             liveClosedCadenceObservation: liveClosedCadenceObservation,
@@ -2029,6 +2031,7 @@ extension AetherEngine {
         host.preferDualLayerDolbyVision = loadedOptions.preferDualLayerDolbyVision
         host.elType = elType ?? sourceElType
         host.setAudioDelay(loadedOptions.audioDelaySeconds)   // AE#464: before the decoder opens
+        if isLive { host.liveEdgeCushionSeconds = loadedOptions.liveEdgeCushionSeconds }
         // AE#813: a live ingest delivers whole segments, and the host's holdback follows their length.
         if isLive, let ingest = customReader as? LiveIngestSourceInfo {
             host.liveDeliveryUnit = { [weak ingest] in

@@ -12,6 +12,18 @@ the public-API contract.
 
 ### Added
 
+- **`LoadOptions.liveEdgeCushionSeconds`: a host chooses how far behind the live edge a live
+  session plays.** The live counterpart of a buffer-duration setting, for viewers whose link is
+  slower or less steady than the channel. It only ever moves the playhead further back than the
+  path's own distance and is clamped to 45 s. On the loopback it raises the served `HOLD-BACK`, the
+  first-serve gate and its deadline, and floors `.fastZap`'s shallow start; the live HLS ingest
+  joins deep enough for a listed backlog to fill it at link speed. On the software path it is the
+  join lead, the landing holdback and the cushion a rebuffer refills before resuming (without a
+  DVR window it keeps a packet ring that deep, publishing no rewind window); on
+  `nativeRemoteHLS` it is `configuredTimeOffsetFromLive`, preserved across stalls. A session holding
+  the cushion reads `isAtLiveEdge`. `nil` keeps today's behaviour. `aetherctl play --live-cushion SECONDS`
+  drives it.
+
 - **`LoadOptions.sessionCacheByteBudget` and `EngineDiagnostics.sessionCacheStatus`: a host can
   size the temporary VOD cache and see what it holds (#830, thanks @orut34iop).** An explicit byte
   request goes through the same quarter-of-free-space clamp and `RetentionClaims` ledger as the

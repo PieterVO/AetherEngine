@@ -70,7 +70,7 @@ func printUsage() {
       aetherctl serve [--no-dv] [--force-dv] [--dv-base-layer] [--start-position S] [--iframes] [--atmos-bed 7.1.4] [--audio-index N] <url>
       aetherctl validate [--no-dv] [--force-dv] [--dv-base-layer] <url>
       aetherctl swdecode [--frames N] <url>
-      aetherctl play [--fel] [--surface | --window] [--cycle-el SECONDS] [--dv-pin SPEC] [--seconds N] [--live] [--no-sw-escalation] [--fast-zap] [--live-start-immediately] [--dvr-window N] [--subs <codec-or-lang>]
+      aetherctl play [--fel] [--surface | --window] [--cycle-el SECONDS] [--dv-pin SPEC] [--seconds N] [--live] [--no-sw-escalation] [--fast-zap] [--live-start-immediately] [--live-cushion SECONDS] [--dvr-window N] [--subs <codec-or-lang>]
                  [--assert-dv] [--dv-base-layer]
                  [--start-position S] [--switch-audio <index>[@ms]]
                  [--teletext-page N] [--switch-teletext-page <page|auto>[@ms]]
@@ -616,6 +616,8 @@ if first == "live" {
     let realtime = takeFlag("--realtime", from: &rest)
     // --fast-zap: LoadOptions.liveJoinProfile = .fastZap (AE#195 low-latency live join).
     let fastZap = takeFlag("--fast-zap", from: &rest)
+    // --live-cushion N: LoadOptions.liveEdgeCushionSeconds.
+    let liveFixtureCushion = takeDoubleFlag("--live-cushion", from: &rest)
     // --preroll N: backlog seconds the paced fixture bursts before 1x pacing (default 30).
     // 0 models a strict-realtime origin with no backlog (the AE#195 slow-join case).
     let preroll = takeDoubleFlag("--preroll", from: &rest)
@@ -674,7 +676,7 @@ if first == "live" {
                  reloadTest: reloadTest,
                  forceSoftware: forceSW, dropAfter: dropAfter,
                  discontinuityAt: discontinuityAt, realtime: realtime || realtimeRate != nil,
-                 fastZap: fastZap, pacingPreroll: preroll, pacingRate: realtimeRate,
+                 fastZap: fastZap, liveCushion: liveFixtureCushion, pacingPreroll: preroll, pacingRate: realtimeRate,
                  originLead: originLead,
                  freezeAfter: freezeAfter, unfreezeAfter: unfreezeAfter,
                  rewindBeforeFreeze: rewindBeforeFreeze,
@@ -716,6 +718,8 @@ if first == "play" {
     let playLiveStartImmediately = takeFlag("--live-start-immediately", from: &rest)
     let playNoLiveStartImmediately = takeFlag("--no-live-start-immediately", from: &rest)
     let liveStartImmediately = playLiveStartImmediately ? true : !playNoLiveStartImmediately
+    // LoadOptions.liveEdgeCushionSeconds: how far behind the live edge the session plays.
+    let liveCushion = takeDoubleFlag("--live-cushion", from: &rest)
     let dvrWindow = takeDoubleFlag("--dvr-window", from: &rest)
     let subsPick = takeStringFlag("--subs", from: &rest)
     let hostCalls = takeStringFlag("--host-calls", from: &rest).map { $0.split(separator: ",").map(String.init) } ?? []
@@ -1039,7 +1043,7 @@ if first == "play" {
         }
         done.wait()
     }
-    exit(runPlay(url: parseSourceURL(urlArg), seconds: seconds, live: live, nativeHLS: nativeHLS, liveIngest: liveIngest, fastZap: playFastZap, liveStartImmediately: liveStartImmediately, dvrWindow: dvrWindow, subsPick: subsPick, hostCalls: hostCalls, audioStats: audioStats, seekEvery: seekEvery, seekPattern: seekPattern, seekCount: seekCount, startPosition: playStartPosition, mallocCensus: mallocCensus, forceSoftware: playForceSW, softwareEscalation: playSoftwareEscalation,
+    exit(runPlay(url: parseSourceURL(urlArg), seconds: seconds, live: live, nativeHLS: nativeHLS, liveIngest: liveIngest, fastZap: playFastZap, liveStartImmediately: liveStartImmediately, liveCushion: liveCushion, dvrWindow: dvrWindow, subsPick: subsPick, hostCalls: hostCalls, audioStats: audioStats, seekEvery: seekEvery, seekPattern: seekPattern, seekCount: seekCount, startPosition: playStartPosition, mallocCensus: mallocCensus, forceSoftware: playForceSW, softwareEscalation: playSoftwareEscalation,
                  censusThresholdMB: censusThresholdMB, censusHz: censusHz, frameTimes: frameTimes, presentTimes: presentTimes, servedURL: servedURL, pictureProbe: pictureProbe, pictureOrigin: pictureOrigin, nativeVideoFrameDiagnostics: nativeVideoFrameDiagnostics, nativeVideoFrameRecovery: nativeVideoFrameRecovery, sidecars: sidecars,
                  audioSwitch: audioSwitch,
                  teletextPage: teletextPage, teletextSwitch: teletextSwitch,

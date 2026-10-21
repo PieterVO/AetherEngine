@@ -438,6 +438,10 @@ final class NativeAVPlayerHost {
         /// 4 s matches the loopback segment cadence; the remote-HLS bypass passes 0 (system adaptive),
         /// where 4 s forced a 3-4 s black screen on bandwidth-limited Jellyfin live transcodes.
         var forwardBufferDuration: Double = 4.0
+        /// `LoadOptions.liveEdgeCushionSeconds` on the remote-HLS bypass, validated: the item's
+        /// `configuredTimeOffsetFromLive`, kept across stalls. nil leaves the origin's HOLD-BACK in
+        /// charge. The loopback states its cushion in the playlist it serves instead.
+        var liveEdgeOffsetSeconds: Double?
         /// The lean remote-HLS path has no live-reopen or readiness watchdog, so AVPlayer's "gave up"
         /// signal has to surface a dead upstream instead of being swallowed as a recoverable stall.
         var surfaceEndFailures: Bool = false
@@ -572,6 +576,10 @@ final class NativeAVPlayerHost {
         // 4s default matches loopback HLS segment cadence; raising it for live makes AVPlayer race to the edge and stall at the transcode warm-up gap.
         // Remote-HLS passes 0 (system adaptive): 4s forced a 3-4s black screen on bandwidth-limited Jellyfin live transcodes.
         item.preferredForwardBufferDuration = forwardBufferDuration
+        if sessionContract.isLive, let offset = sessionContract.liveEdgeOffsetSeconds {
+            item.configuredTimeOffsetFromLive = CMTime(seconds: offset, preferredTimescale: 1000)
+            item.automaticallyPreservesTimeOffsetFromLive = true
+        }
 
         // Enables per-frame HDR10+ / DV RPU metadata; without it DV sources show in HDR10 mode (DrHurt: Philips TV stayed in HDR mode for P8 MKVs).
         // Set false on SDR-fallback paths -- the per-frame metadata pipeline is suspected of ~3 MB/sec RSS growth on long DV 8.1 sessions.

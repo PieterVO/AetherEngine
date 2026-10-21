@@ -294,6 +294,9 @@ final class NativeAVPlayerHost {
     /// observation alone leaves the decision to whether AVFoundation happens to republish the status.
     private var waitingReasonObservation: NSKeyValueObservation?
     private var seekableObservation: NSKeyValueObservation?
+    /// Raises a host's live cushion to the origin's own recommended offset (its HOLD-BACK) once the
+    /// playlist is read, so the cushion never plays closer to the edge than the origin asks for.
+    private var liveOffsetFloorObservation: NSKeyValueObservation?
     /// Diagnostic: isReadyForDisplay is the only signal for first-frame-on-screen; t+ stamps localize the audio-leads-black-video gap.
     private var layerReadyObservation: NSKeyValueObservation?
     /// t+ reference for startup diagnostics; written on MainActor, read off-main from KVO -- diagnostic-only, a torn read is harmless.
@@ -428,6 +431,13 @@ final class NativeAVPlayerHost {
     ///
     /// `swapItem` is the fix rather than a longer argument list: a swap has no contract argument to get
     /// wrong, and a genuinely new session states its own.
+    /// The offset from the live edge a remote-HLS session holds: the host's cushion, never closer
+    /// than the origin's recommended offset once that is known.
+    nonisolated static func liveEdgeOffset(cushionSeconds: Double, recommendedSeconds: Double) -> Double {
+        guard recommendedSeconds.isFinite, recommendedSeconds > 0 else { return cushionSeconds }
+        return max(cushionSeconds, recommendedSeconds)
+    }
+
     struct SessionLoadContract: Sendable, Equatable {
         /// Whether the session is live. Gates the AE#440 join override and the AE#287 premature-end
         /// recovery, which only makes sense for a presentation with an advertised end.
@@ -579,6 +589,18 @@ final class NativeAVPlayerHost {
         if sessionContract.isLive, let offset = sessionContract.liveEdgeOffsetSeconds {
             item.configuredTimeOffsetFromLive = CMTime(seconds: offset, preferredTimescale: 1000)
             item.automaticallyPreservesTimeOffsetFromLive = true
+            // The origin's HOLD-BACK is only known once its playlist is read, and a shallower cushion
+            // would otherwise move the playhead closer than it (AE#189's stall-danger zone).
+            liveOffsetFloorObservation = item.observe(\.recommendedTimeOffsetFromLive, options: [.initial, .new]) {
+                [weak self] item, _ in
+                let recommended = item.recommendedTimeOffsetFromLive.seconds
+                Task { @MainActor in
+                    guard let self, self.sessionID == sid, let item = self.playerItem else { return }
+                    let target = Self.liveEdgeOffset(cushionSeconds: offset, recommendedSeconds: recommended)
+                    guard target > offset, item.configuredTimeOffsetFromLive.seconds < target else { return }
+                    item.configuredTimeOffsetFromLive = CMTime(seconds: target, preferredTimescale: 1000)
+                }
+            }
         }
 
         // Enables per-frame HDR10+ / DV RPU metadata; without it DV sources show in HDR10 mode (DrHurt: Philips TV stayed in HDR mode for P8 MKVs).
@@ -2400,6 +2422,8 @@ final class NativeAVPlayerHost {
         waitingReasonObservation = nil
         seekableObservation?.invalidate()
         seekableObservation = nil
+        liveOffsetFloorObservation?.invalidate()
+        liveOffsetFloorObservation = nil
         loadedVideoObservation?.invalidate()
         loadedVideoObservation = nil
         loadedVideoRanges = []

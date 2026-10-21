@@ -20,7 +20,8 @@ the public-API contract.
   joins deep enough for a listed backlog to fill it at link speed. On the software path it is the
   join lead, the landing holdback and the cushion a rebuffer refills before resuming (without a
   DVR window it keeps a packet ring that deep, publishing no rewind window); on
-  `nativeRemoteHLS` it is `configuredTimeOffsetFromLive`, preserved across stalls. A session holding
+  `nativeRemoteHLS` it is `configuredTimeOffsetFromLive`, preserved across stalls and never below
+  the origin's own recommended offset. A session holding
   the cushion reads `isAtLiveEdge`. `nil` keeps today's behaviour. `aetherctl play --live-cushion SECONDS`
   drives it.
 

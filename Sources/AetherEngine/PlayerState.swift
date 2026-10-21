@@ -668,7 +668,8 @@ public struct LoadOptions: Sendable, Equatable {
     /// at it), and the live HLS ingest joins deep enough to cover it; on the software path it is the
     /// join lead and the cushion a rebuffer refills before resuming (a session without a DVR window
     /// keeps a packet ring that deep for it and still publishes no rewind window); on `nativeRemoteHLS` it is
-    /// `AVPlayerItem.configuredTimeOffsetFromLive`, preserved across stalls. A session holding the
+    /// `AVPlayerItem.configuredTimeOffsetFromLive`, preserved across stalls and raised to the origin's
+    /// `recommendedTimeOffsetFromLive` once its playlist is read. A session holding the
     /// cushion reads `isAtLiveEdge` (on the AVPlayer paths the published edge already sits a holdback
     /// back; the software path widens its tolerance by the cushion). It cannot help a link that is slower than the channel's bitrate,
     /// where a deeper buffer only delays the stall. Invalid or non-positive values mean nil. Ignored

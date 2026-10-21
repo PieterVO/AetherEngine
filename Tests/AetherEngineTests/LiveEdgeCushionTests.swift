@@ -144,3 +144,12 @@ struct LiveEdgeCushionTests {
         #expect(now < SoftwareLiveJoinPolicy.maximumSettleSeconds + 21)
     }
 }
+
+@Suite("A remote-HLS cushion never plays closer than the origin's own offset")
+struct RemoteLiveEdgeOffsetTests {
+    @Test("the deeper of the cushion and the origin's recommended offset",
+          arguments: [(5.0, 18.0, 18.0), (30.0, 18.0, 30.0), (20.0, 0.0, 20.0), (20.0, .nan, 20.0)])
+    func offset(cushion: Double, recommended: Double, expected: Double) {
+        #expect(NativeAVPlayerHost.liveEdgeOffset(cushionSeconds: cushion, recommendedSeconds: recommended) == expected)
+    }
+}

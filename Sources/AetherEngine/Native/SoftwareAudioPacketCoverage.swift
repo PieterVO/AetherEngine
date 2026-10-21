@@ -88,7 +88,9 @@ struct SoftwareAudioPacketCoverage: Sendable {
         // Preserve upstream's duration-less audio contract (including repeated sub-ms TrueHD
         // timestamps). A missing/backward/overflowing timestamp breaks the predecessor chain.
         // This fallback does NOT apply to positive durations lacking trustworthy sample geometry.
-        if duration == 0, timing == nil, !overflow, delta > 0, let prior,
+        // It does apply when admitted geometry fails to join: codecpar can understate the frame
+        // (implicit HE-AAC), and without it a duration-less track would cover nothing at all.
+        if duration == 0, !joined, !overflow, delta > 0, let prior,
            delta <= Int64(denominator) / (2 * Int64(numerator)) {
             coverage.insert(pts: prior, duration: delta)
         }

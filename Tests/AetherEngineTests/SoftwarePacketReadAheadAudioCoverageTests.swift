@@ -215,6 +215,13 @@ struct SoftwareAudioPacketCoverageTests {
         for pts: Int64 in [0, 0, 1, 2, 2, 3, 1000, 1001] { legacy.insert(pts: pts, duration: 0, byteCount: 40) }
         #expect(ranges(legacy).count == 2)
         #expect(!ranges(legacy).contains { $0.contains(0.5) })
+        // Implicit HE-AAC: codecpar says 1024 samples, every packet holds 2048, no packet a duration.
+        var understated = make(.init(sampleRate: 48000, layout: .fixed(samples: 1024, packetBytes: nil)))
+        for i: Int64 in 0..<200 { understated.insert(pts: i * 2048 * 1000 / 48000, duration: 0, byteCount: 371) }
+        #expect(ranges(understated).count == 1, "failed geometry dropped duration-less successor coverage")
+        var straddle = make(nil)
+        for pts: Int64 in [Int64.min + 1, Int64.max - 1] { straddle.insert(pts: pts, duration: 0, byteCount: 40) }
+        #expect(ranges(straddle).isEmpty, "an overflowing successor difference invented coverage")
         var overflow = make()
         for pts: Int64 in [Int64.min + 1, Int64.max - 100, 0, -100, Int64.max] {
             overflow.insert(pts: pts, duration: 46, byteCount: 371)

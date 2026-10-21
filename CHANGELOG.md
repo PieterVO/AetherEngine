@@ -75,13 +75,19 @@ the public-API contract.
   track already did, and keeps the URL route for one-shot sidecars. Selecting an embedded secondary
   track clears the old sidecar URL, `stopInternal` clears the active secondary id, and a late
   secondary decode from an earlier load cannot publish cues or loading state into the next one.
+- **Audio on a coarse time base no longer fragments the software packet cache (#828, thanks
+  @orut34iop).** A 2048-sample WMA frame at 44.1 kHz lands on 46 or 47 ms steps, and each packet's
+  declared 46 ms left a 1 ms hole at every 47 ms step, so seeks into bytes already held refetched.
+  Packets whose codec fixes the sample count (AC-3, MPEG audio, declared AAC/E-AC-3 frame sizes,
+  non-reservoir WMA v1/v2, PCM) now carry one rational sample clock across those steps, for the
+  read-ahead frontier, `residentRanges` and seek admission alike. A missing packet, a tick of drift
+  per packet, a backward or missing timestamp and an unknown layout still leave a hole. Duration-less
+  audio keeps its successor coverage, also when the declared frame size turns out wrong.
 
 ### Changed
 
 - `aetherctl play` rejects `--no-fel` and `--no-dual-layer` as stray flags. They were accepted as no-ops
   since 7.37.0 for scripts written when `play` turned the dual-layer route on by itself.
-
-- Software packet-cache audio coverage joins timestamp quantization only when admitted codec sample geometry supports one continuous rational sample clock. Unknown layouts, real gaps and accumulating drift remain strict; duration-less audio keeps its successor coverage.
 
 ### Tests and CI
 

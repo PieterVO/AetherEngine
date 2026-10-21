@@ -984,27 +984,15 @@ public final class HLSVideoEngine: @unchecked Sendable {
     /// degrades into a multi-GB linear scan. Beyond this, abort and build a uniform-stride plan.
     static let cuePrewarmTimeout: TimeInterval = 10.0
 
-    /// SegmentCache retention budget (#93 / Sodalite#32): capped at 2 GiB and clamped to a quarter
-    /// of the tmp volume's available capacity, so a nearly-full device never trades playback
-    /// headroom for seek history.
-    ///
-    /// Live used to pass 0 on the reasoning that the sliding playlist had already dropped
-    /// everything behind the window, so retention would serve nothing. That had it backwards. The
-    /// playlist is the LOOSER bound (`windowSegmentCount`, e.g. 300 segments for a 600 s DVR window
-    /// at a 2 s cadence); `pruneOutsideWindow` is the tighter one, and with a 0 budget it takes the
-    /// hard-window branch and cuts at `currentTargetIndex - backwardWindow`, i.e. 20 segments. A
-    /// live session therefore retained ~42 s no matter what `dvrWindowSeconds` promised, while the
-    /// playlist and `liveSeekableRange` advertised the full window: a rewind past ~42 s asked for a
-    /// segment the cache had deleted, and live has no `restartHandler` to re-produce it. The budget
-    /// is exactly the mechanism that keeps that history resident, so live gets it too.
-    ///
-    /// `capRelaxed` (#207) drops the 2 GiB default for a host that explicitly asked to pre-buffer more
-    /// than the historical window could hold; the quarter-of-free-space clamp, which is what actually
-    /// protects the volume, always applies. Unknown capacity keeps the conservative cap either way.
     struct SessionCacheBudgetResolution: Sendable, Equatable {
         let requestedBytes: Int?
         let volumeSafetyLimitBytes: Int
         let baseEffectiveBytes: Int
+
+        /// What the cache and the producer park enforce. 0 reads as "no byte bound" in
+        /// `SegmentCache`, `PrefetchDiskBudget` and the window sizing, so an explicit request never
+        /// hands them 0: the playback window stays resident, nothing past it does.
+        var enforcedBytes: Int { requestedBytes == nil ? baseEffectiveBytes : max(1, baseEffectiveBytes) }
     }
 
     /// Resolve a caller-exact session budget without weakening the existing tmp-volume guard.
@@ -1041,6 +1029,23 @@ public final class HLSVideoEngine: @unchecked Sendable {
         )
     }
 
+    /// SegmentCache retention budget (#93 / Sodalite#32): capped at 2 GiB and clamped to a quarter
+    /// of the tmp volume's available capacity, so a nearly-full device never trades playback
+    /// headroom for seek history.
+    ///
+    /// Live used to pass 0 on the reasoning that the sliding playlist had already dropped
+    /// everything behind the window, so retention would serve nothing. That had it backwards. The
+    /// playlist is the LOOSER bound (`windowSegmentCount`, e.g. 300 segments for a 600 s DVR window
+    /// at a 2 s cadence); `pruneOutsideWindow` is the tighter one, and with a 0 budget it takes the
+    /// hard-window branch and cuts at `currentTargetIndex - backwardWindow`, i.e. 20 segments. A
+    /// live session therefore retained ~42 s no matter what `dvrWindowSeconds` promised, while the
+    /// playlist and `liveSeekableRange` advertised the full window: a rewind past ~42 s asked for a
+    /// segment the cache had deleted, and live has no `restartHandler` to re-produce it. The budget
+    /// is exactly the mechanism that keeps that history resident, so live gets it too.
+    ///
+    /// `capRelaxed` (#207) drops the 2 GiB default for a host that explicitly asked to pre-buffer more
+    /// than the historical window could hold; the quarter-of-free-space clamp, which is what actually
+    /// protects the volume, always applies. Unknown capacity keeps the conservative cap either way.
     static func sessionRetentionBudgetBytes(volumeAvailableBytes: Int64?, capRelaxed: Bool = false) -> Int {
         resolveSessionCacheBudget(
             requestedBytes: nil,
@@ -1190,6 +1195,8 @@ public final class HLSVideoEngine: @unchecked Sendable {
     private var retentionBudgetBytes: Int = 0
     private let requestedSessionCacheBudgetBytes: Int?
     private var sessionCacheVolumeSafetyLimitBytes: Int?
+    /// The clamped request the status reports; `retentionBudgetBytes` is what is enforced.
+    private var sessionCacheBaseEffectiveBytes: Int = 0
 
     /// Lifecycle snapshots, including async close completion, are delivered here. The host may
     /// sample `sessionCacheStatus()` for current bytes; this callback is primarily for cleanup.
@@ -1718,7 +1725,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
                 volumeAvailableBytes: remaining,
                 capRelaxed: capRelaxed)
             resolvedBudget = budget
-            return budget.baseEffectiveBytes
+            return budget.enforcedBytes
         }
         let budget = resolvedBudget!
         let retentionBudget = claim.bytes
@@ -1732,6 +1739,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
         restartLock.lock()
         self.retentionBudgetBytes = retentionBudget
         self.sessionCacheVolumeSafetyLimitBytes = budget.volumeSafetyLimitBytes
+        self.sessionCacheBaseEffectiveBytes = min(retentionBudget, budget.baseEffectiveBytes)
         self.retentionClaim = claim
         self.cache = segmentCache
         restartLock.unlock()
@@ -2793,7 +2801,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
     public func sessionCacheStatus() -> SessionCacheStatus {
         restartLock.lock()
         let cache = self.cache
-        let budget = retentionBudgetBytes
+        let budget = sessionCacheBaseEffectiveBytes
         let safetyLimit = sessionCacheVolumeSafetyLimitBytes
         restartLock.unlock()
         if let cache {
@@ -3135,7 +3143,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
         cache = nil
         let cacheStatusCallback = onSessionCacheStatusChanged
         let cacheRequestedBudget = requestedSessionCacheBudgetBytes.map { max(0, $0) }
-        let cacheEffectiveBudget = retentionBudgetBytes
+        let cacheEffectiveBudget = sessionCacheBaseEffectiveBytes
         let cacheVolumeSafetyLimit = sessionCacheVolumeSafetyLimitBytes
         let cacheCapability: SessionCacheCapability = isLiveSession ? .unsupported : .active
         compositorPreviewLock.lock()

@@ -197,7 +197,9 @@ final class SegmentCache: @unchecked Sendable {
             if Self.isOutOfSpace(error) { storageExhaustedLatch = true }
         }
 
-        // AE#451: protect this session from a sibling's stale sweep.
+        // Before the sweep, so a sibling constructed in the same breath cannot read this session
+        // as unheld (AE#451). The age check covers the remaining microseconds: a directory this
+        // young is never a sweep candidate.
         self.lockFD = Self.acquireLiveMarker(sessionDir: sessionDir)
         let sweep = Self.sweepStaleSessionDirs(baseDir: baseDir, currentSession: sessionID, now: now)
         if sweep.failureCount > 0 {
@@ -265,7 +267,11 @@ final class SegmentCache: @unchecked Sendable {
                   let created = values.creationDate,
                   created < cutoff else { continue }
             // Old does not mean abandoned: spare sessions whose marker is held (AE#451).
-            if SessionDirectoryLiveness.isLive(entry) { continue }
+            if SessionDirectoryLiveness.isLive(entry) {
+                EngineLog.emit("[SegmentCache] sweep spared live session dir \(entry.lastPathComponent)",
+                               category: .session)
+                continue
+            }
             do {
                 try fm.removeItem(at: entry)
                 removed += 1

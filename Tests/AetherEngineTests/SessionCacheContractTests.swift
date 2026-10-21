@@ -45,6 +45,21 @@ struct SessionCachePublicContractTests {
             capRelaxed: false
         )
         #expect(result.baseEffectiveBytes == 0)
+        #expect(result.enforcedBytes == 1)
+    }
+
+    @Test("An explicit request never reaches the cache as the unbounded 0")
+    func explicitRequestStaysBounded() {
+        let full = HLSVideoEngine.resolveSessionCacheBudget(
+            requestedBytes: 512 << 20, volumeAvailableBytes: 3, capRelaxed: true)
+        #expect(full.baseEffectiveBytes == 0)
+        #expect(full.enforcedBytes == 1)
+        let automatic = HLSVideoEngine.resolveSessionCacheBudget(
+            requestedBytes: nil, volumeAvailableBytes: 100 << 30)
+        #expect(automatic.enforcedBytes == automatic.baseEffectiveBytes)
+        #expect(PrefetchDiskBudget.shouldPark(
+            forwardBytes: 10, budgetBytes: full.enforcedBytes,
+            head: PrefetchDiskBudget.minAheadSegments, consumerTarget: 0))
     }
 
     @Test("Native remote HLS reports unsupported rather than zero-byte support")

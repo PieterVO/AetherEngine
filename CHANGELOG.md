@@ -12,6 +12,16 @@ the public-API contract.
 
 ### Added
 
+- **`LoadOptions.sessionCacheByteBudget` and `EngineDiagnostics.sessionCacheStatus`: a host can
+  size the temporary VOD cache and see what it holds (#830, thanks @orut34iop).** An explicit byte
+  request goes through the same quarter-of-free-space clamp and `RetentionClaims` ledger as the
+  automatic 2 GiB budget, and applies to the fMP4 segment cache and the software disk packet
+  store. `0` keeps only the playback window. The snapshot reports requested and effective bytes,
+  resident and forward bytes, producer parking, evictions, a protected window that exceeds the
+  request, and the cleanup reason and result after stop, sampled off-main and never carried into
+  the next session. `nil` keeps today's sizing; live DVR, the tvOS memory store and native remote
+  HLS (reported as unsupported) are unchanged.
+
 - **`prepareExternalSubtitle` / `commitExternalSubtitle`: a downloaded sidecar is decoded before
   it replaces the selection (#829, thanks @orut34iop).** A host picking an external subtitle had to
   switch to it before knowing the file decodes. Preparation decodes a local SRT, WebVTT, ASS or SSA
@@ -222,8 +232,6 @@ the public-API contract.
   thanks @aravindhsampath).
 
 ### Added
-
-- Optional session-cache byte budgets reuse existing volume and multi-session safeguards. A separate diagnostics snapshot reports effective bytes, protected playback-window overflow and typed cleanup results. Cache state is sampled off-main and old-session updates are rejected; defaults and live DVR policy remain unchanged.
 
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
   `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /

@@ -1097,6 +1097,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
         sourceOpenPolicy: SourceOpenPolicy = .init(),
         liveStartupGraceSeconds: TimeInterval? = nil,
         liveStartupSingleSegmentMinimumSeconds: TimeInterval? = nil,
+        liveEdgeCushionSeconds: Double? = nil,
         liveCutTargetSeconds: Double? = nil,
         blockingReloadOverride: Bool? = nil,
         liveCadenceObservation: (@Sendable () -> Double?)? = nil,
@@ -1149,6 +1150,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
         self.liveJoinProfile = liveJoinProfile
         self.liveStartupGraceSeconds = liveStartupGraceSeconds
         self.liveStartupSingleSegmentMinimumSeconds = liveStartupSingleSegmentMinimumSeconds
+        self.liveEdgeCushionSeconds = LiveEdgePolicy.edgeCushion(liveEdgeCushionSeconds)
         // An explicit cut target keeps precedence for direct callers. Otherwise resolve the profile.
         let resolvedLiveCutTarget = liveCutTargetSeconds
             ?? Self.liveCutTargetSeconds(for: liveJoinProfile)
@@ -1222,6 +1224,8 @@ public final class HLSVideoEngine: @unchecked Sendable {
     private let liveJoinProfile: LiveJoinProfile
     private let liveStartupGraceSeconds: TimeInterval?
     private let liveStartupSingleSegmentMinimumSeconds: TimeInterval?
+    /// `LoadOptions.liveEdgeCushionSeconds`, validated.
+    private let liveEdgeCushionSeconds: Double?
 
     /// Live segment cut target for this session, resolved from the host's `LiveJoinProfile` (AE#195).
     /// Drives the producer's keyframe cut, `LiveWindowSizing`, and (via the served TARGETDURATION floor)
@@ -2256,7 +2260,8 @@ public final class HLSVideoEngine: @unchecked Sendable {
                 // AE#443: the window is a promise in seconds and the disk is a fact in bytes. Handing
                 // the sizing the budget is what lets the two meet, instead of the producer meeting a
                 // resident cap it can never pass.
-                retentionBudgetBytes: retentionBudgetBytes
+                retentionBudgetBytes: retentionBudgetBytes,
+                edgeCushionSeconds: isLiveSession ? liveEdgeCushionSeconds : nil
             ),
             nativeLiveDVRPolicy: isLiveSession ? nativeLiveDVRPolicy : nil,
             allowsBoundedDegradedStart: liveJoinProfile == .fastZap,

@@ -51,9 +51,12 @@ struct SoftwareLiveJoinPolicy: Equatable {
 
     /// Notes the ring's first and newest PTS at `now` (seconds on any monotonic clock); nil while the
     /// burst is still landing, then the decision, once. `leadSeconds` is the source's join lead,
-    /// `SoftwareLiveHoldback.joinLeadSeconds` (AE#813).
+    /// `SoftwareLiveHoldback.joinLeadSeconds` (AE#813). `minimumSpanSeconds` is a host's
+    /// `liveEdgeCushionSeconds`: a settled ring shallower than that keeps waiting, at 1x on a realtime
+    /// source, for at most `maximumSettleSeconds` plus the cushion, and then starts on what it holds.
     mutating func observe(firstPts: Double, newestPts: Double, at now: TimeInterval,
-                          leadSeconds: Double = Self.leadSeconds) -> Decision? {
+                          leadSeconds: Double = Self.leadSeconds,
+                          minimumSpanSeconds: Double? = nil) -> Decision? {
         guard let firstObservedAt, let windowStartPts, let windowStartAt else {
             self.firstObservedAt = now
             self.windowStartPts = newestPts
@@ -74,6 +77,10 @@ struct SoftwareLiveJoinPolicy: Equatable {
         }
         guard settled else { return nil }
         let span = newestPts - firstPts
+        if let minimum = minimumSpanSeconds, !(span >= minimum),
+           elapsed < Self.maximumSettleSeconds + minimum {
+            return nil
+        }
         guard span.isFinite, span >= leadSeconds + Self.minimumSkipSeconds else { return .fromStart }
         return .place(targetPts: newestPts - leadSeconds)
     }
@@ -97,6 +104,9 @@ struct SoftwareLiveJoinPolicy: Equatable {
 struct SoftwareLiveHoldback: Equatable, Sendable {
     /// Seconds of media the source delivers at once, nil for a continuous source.
     let deliveryUnitSeconds: Double?
+    /// `LoadOptions.liveEdgeCushionSeconds`, validated: a floor under the join lead, the landing
+    /// holdback and the rebuffer resume cushion, on a continuous source as on a segmented one.
+    let edgeCushionSeconds: Double?
 
     static let continuous = SoftwareLiveHoldback(deliveryUnitSeconds: nil)
 
@@ -105,31 +115,35 @@ struct SoftwareLiveHoldback: Equatable, Sendable {
     /// Margin over one unit before a rebuffer resumes.
     static let resumeSlackSeconds: Double = 2
 
-    init(deliveryUnitSeconds: Double?) {
+    init(deliveryUnitSeconds: Double?, edgeCushionSeconds: Double? = nil) {
         if let unit = deliveryUnitSeconds, unit.isFinite, unit > 0 {
             self.deliveryUnitSeconds = unit
         } else {
             self.deliveryUnitSeconds = nil
         }
+        self.edgeCushionSeconds = LiveEdgePolicy.edgeCushion(edgeCushionSeconds)
     }
 
     /// Where a join starts behind the newest media: 4 s for a continuous source, 4 s on 2 s segments,
     /// 10 s on 6 s segments, 16 s on 10 s segments.
     var joinLeadSeconds: Double {
-        guard let unit = deliveryUnitSeconds else { return SoftwareLiveJoinPolicy.leadSeconds }
-        return Swift.min(Swift.max(SoftwareLiveJoinPolicy.leadSeconds, 1.5 * unit + 1), Self.maximumLeadSeconds)
+        let own = deliveryUnitSeconds.map {
+            Swift.min(Swift.max(SoftwareLiveJoinPolicy.leadSeconds, 1.5 * $0 + 1), Self.maximumLeadSeconds)
+        } ?? SoftwareLiveJoinPolicy.leadSeconds
+        return Swift.max(own, edgeCushionSeconds ?? 0)
     }
 
     /// How far behind the frontier a seek is held at least (Sodalite#104 round 3).
     var landingHoldbackSeconds: Double {
-        deliveryUnitSeconds == nil ? AudioLookaheadPolicy.rebufferResumeLeadSeconds : joinLeadSeconds
+        deliveryUnitSeconds == nil && edgeCushionSeconds == nil
+            ? AudioLookaheadPolicy.rebufferResumeLeadSeconds : joinLeadSeconds
     }
 
     /// Media that has to stand ahead of the clock before a rebuffer resumes, nil when the audio lead
     /// alone decides (a continuous source).
     var resumeCushionSeconds: Double? {
-        guard let unit = deliveryUnitSeconds else { return nil }
-        return Swift.min(unit + Self.resumeSlackSeconds, joinLeadSeconds)
+        let own = deliveryUnitSeconds.map { Swift.min($0 + Self.resumeSlackSeconds, joinLeadSeconds) }
+        return [own, edgeCushionSeconds].compactMap { $0 }.max()
     }
 
     /// The distance behind the frontier the live-edge verdict counts as the edge, nil for a
@@ -138,7 +152,8 @@ struct SoftwareLiveHoldback: Equatable, Sendable {
     /// the lead sits anywhere up to `lead + unit` behind (measured: 25.5 s after a landing at 17 s on
     /// 10 s segments).
     var edgeHoldbackSeconds: Double? {
-        deliveryUnitSeconds.map { joinLeadSeconds + $0 }
+        if let unit = deliveryUnitSeconds { return joinLeadSeconds + unit }
+        return edgeCushionSeconds == nil ? nil : joinLeadSeconds
     }
 
     /// The unit a live ingest delivers in: the longest segment it served or the longest gap it has

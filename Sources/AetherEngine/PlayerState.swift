@@ -653,6 +653,29 @@ public struct LoadOptions: Sendable, Equatable {
     /// this latency/resilience tradeoff; invalid values preserve the two-segment minimum.
     public var liveStartupSingleSegmentMinimumSeconds: Double? = nil
 
+    /// How far behind the live edge a live session plays, in seconds: the buffer a live viewer has
+    /// against a link that is slower or less steady than the channel. nil (default) keeps each path's
+    /// own distance (`liveJoinProfile` decides it on the loopback, the source's delivery unit on the
+    /// software path, the origin's HOLD-BACK on `nativeRemoteHLS`). A value only ever moves the
+    /// playhead FURTHER back, never closer than the path's own safe distance, and is clamped to
+    /// `LiveEdgePolicy.maximumEdgeCushionSeconds` (45 s).
+    ///
+    /// Live media arrives in real time, so a cushion can only be bought by waiting: a join holds
+    /// until that much media stands behind the newest (a live HLS origin that lists a backlog fills it
+    /// at link speed, a raw MPEG-TS channel only at 1x after its connect burst), and the session then
+    /// plays that far behind the broadcast for as long as it runs. On the loopback it raises the
+    /// advertised `HOLD-BACK` and the first-serve gate with it (and floors `.fastZap`'s bounded start
+    /// at it), and the live HLS ingest joins deep enough to cover it; on the software path it is the
+    /// join lead and the cushion a rebuffer refills before resuming (a session without a DVR window
+    /// keeps a packet ring that deep for it and still publishes no rewind window); on `nativeRemoteHLS` it is
+    /// `AVPlayerItem.configuredTimeOffsetFromLive`, preserved across stalls and raised to the origin's
+    /// `recommendedTimeOffsetFromLive` once its playlist is read. A session holding the
+    /// cushion reads `isAtLiveEdge` (on the AVPlayer paths the published edge already sits a holdback
+    /// back; the software path widens its tolerance by the cushion). It cannot help a link that is slower than the channel's bitrate,
+    /// where a deeper buffer only delays the stall. Invalid or non-positive values mean nil. Ignored
+    /// for VOD. Default nil.
+    public var liveEdgeCushionSeconds: Double? = nil
+
     /// Cut AVPlayer's stall-avoidance wait short at the live join, once it is holding on media it has
     /// already buffered. Live sessions on the AVPlayer-backed paths only. Default `false` (AE#440).
     ///
@@ -1015,6 +1038,7 @@ public struct LoadOptions: Sendable, Equatable {
         sourceOpenPolicy: SourceOpenPolicy = .init(),
         liveStartupGraceSeconds: Double? = nil,
         liveStartupSingleSegmentMinimumSeconds: Double? = nil,
+        liveEdgeCushionSeconds: Double? = nil,
         liveJoinStartsImmediately: Bool = true,
         clampsLiveResumeToWindow: Bool = true,
         nativeRemoteHLS: Bool = false,
@@ -1072,6 +1096,7 @@ public struct LoadOptions: Sendable, Equatable {
         self.sourceOpenPolicy = sourceOpenPolicy
         self.liveStartupGraceSeconds = liveStartupGraceSeconds
         self.liveStartupSingleSegmentMinimumSeconds = liveStartupSingleSegmentMinimumSeconds
+        self.liveEdgeCushionSeconds = liveEdgeCushionSeconds
         self.liveJoinStartsImmediately = liveJoinStartsImmediately
         self.clampsLiveResumeToWindow = clampsLiveResumeToWindow
         self.nativeRemoteHLS = nativeRemoteHLS

@@ -446,13 +446,18 @@ final class SoftwarePlaybackHost {
 
     @discardableResult
     func setLiveDVRLimits(_ limits: LiveDVRLimits, availableBytes: Int64?) -> Bool {
-        guard let ring = dvrRing else { return false }
+        guard let ring = dvrRing, !dvrRingHoldsCushionOnly else { return false }
         return ring.setLimits(limits, availableBytes: availableBytes)
     }
     var liveDVRBytes: Int? { dvrRing?.retainedBytes }
-    var liveDVRWindowSeconds: Double? { dvrRing?.retainedWindowSeconds }
+    /// A live session without a DVR window that asked for `liveEdgeCushionSeconds`: the ring exists
+    /// only so the join can wait for the cushion and play behind the reader, and the session still
+    /// publishes no rewind window, so a seek stays refused as on any live-only session.
+    nonisolated(unsafe) private var dvrRingHoldsCushionOnly = false
+
+    var liveDVRWindowSeconds: Double? { dvrRingHoldsCushionOnly ? nil : dvrRing?.retainedWindowSeconds }
     var liveDVRResidentFloor: Double? {
-        guard let pts = dvrRing?.oldestKeyframePts else { return nil }
+        guard !dvrRingHoldsCushionOnly, let pts = dvrRing?.oldestKeyframePts else { return nil }
         liveEdgeLock.lock(); defer { liveEdgeLock.unlock() }
         guard sessionStartPts.isFinite else { return nil }
         return max(0, pts - sessionStartPts)
@@ -477,10 +482,12 @@ final class SoftwarePlaybackHost {
     /// AE#813: the unit a live source delivers in, read on demand because a live ingest learns it
     /// as segments arrive. Set by the engine before `load()`; nil for a continuous source.
     nonisolated(unsafe) var liveDeliveryUnit: (@Sendable () -> Double?)?
+    /// `LoadOptions.liveEdgeCushionSeconds`. Set by the engine before `load()`.
+    nonisolated(unsafe) var liveEdgeCushionSeconds: Double?
 
     /// AE#813: how far behind the newest media this live session holds.
     nonisolated var liveHoldback: SoftwareLiveHoldback {
-        SoftwareLiveHoldback(deliveryUnitSeconds: liveDeliveryUnit?())
+        SoftwareLiveHoldback(deliveryUnitSeconds: liveDeliveryUnit?(), edgeCushionSeconds: liveEdgeCushionSeconds)
     }
 
     /// Guards `sessionStartPts` / `newestSourcePts` against the demux
@@ -533,7 +540,7 @@ final class SoftwarePlaybackHost {
     /// the start; nil before that and when no ring is armed. Published as the resident floor so the
     /// seekable range follows what the ring still holds (audit VPERF-101).
     nonisolated var dvrResidentFloorSessionSeconds: Double? {
-        guard let ring = dvrRing else { return nil }
+        guard let ring = dvrRing, !dvrRingHoldsCushionOnly else { return nil }
         liveEdgeLock.lock()
         let start = sessionStartPts
         liveEdgeLock.unlock()
@@ -1125,7 +1132,15 @@ final class SoftwarePlaybackHost {
         // there is no carried-in picture to guard against here (the native path's problem).
         armReadyForDisplayObserver()
 
-        if isLive, let window = dvrWindowSeconds { _ = prepareLiveDVR(windowSeconds: window, retention: dvrRetention) }
+        dvrRingHoldsCushionOnly = false
+        if isLive, let window = dvrWindowSeconds {
+            _ = prepareLiveDVR(windowSeconds: window, retention: dvrRetention)
+        } else if isLive, let cushion = LiveEdgePolicy.edgeCushion(liveEdgeCushionSeconds) {
+            // The plain live feeder plays packets as the demuxer reads them, so there is nothing to
+            // play behind. A ring as deep as the loopback's cushion window gives the join one.
+            dvrRingHoldsCushionOnly = prepareLiveDVR(
+                windowSeconds: cushion + LiveWindowSizing.edgeCushionWindowMarginSeconds, retention: nil) != nil
+        }
 
         // Resolve the audio stream up front so the session-start log and the decoder agree. #133:
         // live-TS AAC whose codecpar the probe left empty makes av_find_best_stream return -1; the
@@ -2375,7 +2390,8 @@ final class SoftwarePlaybackHost {
                 return self.liveJoinPolicy.observe(firstPts: self.sessionStartPts,
                                                    newestPts: self.newestSourcePts,
                                                    at: ProcessInfo.processInfo.systemUptime,
-                                                   leadSeconds: self.liveHoldback.joinLeadSeconds)
+                                                   leadSeconds: self.liveHoldback.joinLeadSeconds,
+                                                   minimumSpanSeconds: self.liveHoldback.edgeCushionSeconds)
             }
             let liveHoldback: @Sendable () -> SoftwareLiveHoldback = { [weak self] in
                 self?.liveHoldback ?? .continuous

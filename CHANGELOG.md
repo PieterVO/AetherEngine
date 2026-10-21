@@ -10,6 +10,16 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Added
+
+- **`secondarySidecarASSHeader`: a secondary ASS sidecar keeps its markup and script header
+  (#826, thanks @orut34iop).** The secondary sidecar decode ignored `preserveASSMarkup` and
+  dropped the header, while the embedded secondary path already honoured the option. It now
+  publishes raw event lines plus its own header, independent of the primary `sidecarASSHeader`
+  (script resolution and styles can differ). The header clears on a new selection, on
+  `clearSecondarySubtitle()` and on stop, and is decoded again on a session-preserving reload.
+  SRT and WebVTT stay plain text, and output without the option is unchanged.
+
 ### Fixed
 
 - **A live HLS channel on the software path no longer stalls once per segment (#813).** The software
@@ -197,8 +207,6 @@ the public-API contract.
   the purge and residency tests keep real kernel purging. No change to the store in playback.
 
 ### Added
-
-- Secondary ASS sidecars honor `preserveASSMarkup` and publish their own `secondarySidecarASSHeader`, independently cleared with the channel and rebuilt on reload. Default text/rich-text output is unchanged.
 
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
   `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /

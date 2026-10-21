@@ -10,6 +10,10 @@ the public-API contract.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [7.45.0] - 2026-10-21
+
 ### Added
 
 - **`LoadOptions.liveEdgeCushionSeconds`: a host chooses how far behind the live edge a live

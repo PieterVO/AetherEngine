@@ -2153,6 +2153,7 @@ extension AetherEngine {
         }
         if loadGeneration == generation { recordStartupCheckpoint(.sessionConstructed) }   // #361
         let forwardBufferSegments = loadedOptions.forwardBufferSegments
+        let packetCacheStorage = loadedOptions.softwarePacketCacheStorage
         let dvrRetention = loadedOptions.softwareDVRRetention
         try await BlockingWork.detached(priority: .userInitiated) {
             [host, preopenedDemuxer, url, sourceHTTPHeaders, requestHeaders = sessionRequestHeaders, isLive, dvrWindowSeconds, probesize, maxAnalyzeDuration, sequentialOrigin, heldSourceConnection, declaredDuration, networkPhaseSink] in
@@ -2171,7 +2172,8 @@ extension AetherEngine {
                 isLive: isLive,
                 dvrWindowSeconds: dvrWindowSeconds,
                 dvrRetention: dvrRetention,
-                forwardBufferSegments: forwardBufferSegments
+                forwardBufferSegments: forwardBufferSegments,
+                packetCacheStorage: packetCacheStorage
             )
         }.value
         // Superseded: stop idempotently to tear down the demuxer the detached closure opened, then unwind.

@@ -208,6 +208,8 @@ the public-API contract.
 
 ### Added
 
+- Opt-in `LoadOptions.softwarePacketCacheStorage` selects disk or memory for seekable software VOD. Automatic retains existing platform defaults and all stores retain their current budget and eviction policies.
+
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
   `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /
   `DTSXObjectAudio` traits; without them it stays nil), the 1 Hz snapshot carries an

@@ -888,6 +888,9 @@ public struct LoadOptions: Sendable, Equatable {
     /// remote server directly.
     public var forwardBufferSegments: Int?
 
+    /// Compressed-packet storage for seekable software VOD; automatic retains platform defaults.
+    public var softwarePacketCacheStorage: SoftwarePacketCacheStorage = .automatic
+
     /// Serve each VOD loopback segment while it is being written instead of after its cut. The
     /// muxer flushes a fragment about every half second and the loopback server sends each one as
     /// it lands, so AVPlayer can show and start on the first fragments of a segment rather than
@@ -1030,6 +1033,7 @@ public struct LoadOptions: Sendable, Equatable {
         preferredSubtitleLanguages: [String] = [],
         externalSubtitles: [ExternalSubtitleTrack] = [],
         forwardBufferSegments: Int? = nil,
+        softwarePacketCacheStorage: SoftwarePacketCacheStorage = .automatic,
         progressiveSegmentDelivery: Bool = false,
         autoplay: Bool = true,
         teletextPage: Int? = nil,
@@ -1085,6 +1089,7 @@ public struct LoadOptions: Sendable, Equatable {
         self.preferredSubtitleLanguages = preferredSubtitleLanguages
         self.externalSubtitles = externalSubtitles
         self.forwardBufferSegments = forwardBufferSegments
+        self.softwarePacketCacheStorage = softwarePacketCacheStorage
         self.progressiveSegmentDelivery = progressiveSegmentDelivery
         self.autoplay = autoplay
         self.teletextPage = teletextPage

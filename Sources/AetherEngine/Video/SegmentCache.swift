@@ -263,9 +263,8 @@ final class SegmentCache: @unchecked Sendable {
             let values: URLResourceValues
             do { values = try entry.resourceValues(forKeys: [.isDirectoryKey, .creationDateKey]) }
             catch { failures += 1; continue }
-            guard values.isDirectory == true,
-                  let created = values.creationDate,
-                  created < cutoff else { continue }
+            // An unreadable creation date counts as old, as before; liveness still spares a held one.
+            guard values.isDirectory == true, (values.creationDate.map { $0 < cutoff } ?? true) else { continue }
             // Old does not mean abandoned: spare sessions whose marker is held (AE#451).
             if SessionDirectoryLiveness.isLive(entry) {
                 EngineLog.emit("[SegmentCache] sweep spared live session dir \(entry.lastPathComponent)",

@@ -1727,7 +1727,8 @@ public final class HLSVideoEngine: @unchecked Sendable {
             resolvedBudget = budget
             return budget.enforcedBytes
         }
-        let budget = resolvedBudget!
+        let budget = resolvedBudget ?? Self.resolveSessionCacheBudget(
+            requestedBytes: nil, volumeAvailableBytes: availableBytes, capRelaxed: capRelaxed)
         let retentionBudget = claim.bytes
         let segmentCache = SegmentCache(
             forwardWindow: forwardWindowSegments,

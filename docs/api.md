@@ -663,6 +663,8 @@ Three limits are part of the contract rather than implementation detail:
 
 The URL is the key, matched exactly, **and so are the headers**. A signed URL warmed under one signature is not adopted under another, and a warm fetched with different `httpHeaders` than the load carries is not adopted either: an origin that varies on Referer, User-Agent or Authorization answers a different body, and a different size, under one URL, and nothing about the bytes themselves would show it. Pass the load's headers to the warm.
 
+When an adopted head already covers the entire source, opening it issues neither a data connection nor a speculative suffix request. A partial warm still fetches missing data and, when needed, the tail.
+
 Warms are serialised, one at a time across the process. A second `prewarm` while one is in flight waits its turn rather than being refused, which costs the origin nothing because a queued warm holds no request slot and has issued nothing. What never queues is a request against the origin.
 
 `IOReader` is the custom-source protocol: `read`, `seek`, `close` are required; `cancel()`, `makeIndependentReader()` and `discImageProbeEnabled` have defaults that unlock teardown-unblocking, embedded subtitles plus scrub stills, and ISO/UDF probing respectively. Calls arrive on the engine's demux thread, each inside an autorelease pool the engine opens, so a reader built on `FileHandle` or `NSData` does not strand one autoreleased object per read for the length of a session. Full contract in [formats.md](formats.md).

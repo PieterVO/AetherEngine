@@ -83,6 +83,10 @@ the public-API contract.
   read-ahead frontier, `residentRanges` and seek admission alike. A missing packet, a tick of drift
   per packet, a backward or missing timestamp and an unknown layout still leave a hole. Duration-less
   audio keeps its successor coverage, also when the declared frame size turns out wrong.
+- **A fully prewarmed source no longer fetches its suffix again (#831, thanks @orut34iop).** When
+  the adopted head already covers the whole file, the open skipped the data connection but still
+  started the speculative `Range: bytes=-65536` tail request, so a source the warm held entirely was
+  asked for again. That request is now skipped too; a partial warm keeps its tail prefetch.
 
 ### Changed
 

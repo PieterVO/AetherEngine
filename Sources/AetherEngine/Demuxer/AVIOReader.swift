@@ -1297,7 +1297,10 @@ final class AVIOReader: AVIOProvider, @unchecked Sendable {
             // rather than queueing behind it. It asks for a suffix range, which needs no size and
             // therefore needs nothing this open has learned yet. A warm that already carries the
             // trailing object has no use for it.
-            if warm?.tail == nil {
+            // A fully resident head already contains the suffix too. Do not start an asynchronous
+            // request for bytes this open has adopted in their entirety.
+            let fullyWarmed = warm.map { $0.head.end >= $0.contentLength } ?? false
+            if warm?.tail == nil, !fullyWarmed {
                 startTailPrefetch()
             }
             // Playback path. The persistent connection's `Range: bytes=0-` request is itself

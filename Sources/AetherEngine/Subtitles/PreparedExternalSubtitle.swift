@@ -32,13 +32,18 @@ public final class PreparedExternalSubtitle {
 }
 
 extension AetherEngine {
+    /// A seek in flight is still the same session; `loadGeneration` already catches teardown.
+    private var isPreparableSessionState: Bool {
+        state == .playing || state == .paused || state == .seeking
+    }
+
     /// Decode only an already downloaded, bounded text sidecar. No track,
     /// preference, cue, translation or playback state changes during preparation.
     public func prepareExternalSubtitle(_ track: ExternalSubtitleTrack,
                                         policy: ExternalSubtitlePreparationPolicy = .init()) async throws -> PreparedExternalSubtitle {
         let generation = loadGeneration
         let intent = externalSubtitleIntentGeneration
-        guard state == .playing || state == .paused else { throw ExternalSubtitlePreparationError.stale }
+        guard isPreparableSessionState else { throw ExternalSubtitlePreparationError.stale }
         guard track.url.isFileURL, track.sourceStreamIndex == nil,
               ["srt", "vtt", "ass", "ssa"].contains(track.url.pathExtension.lowercased()) else {
             throw ExternalSubtitlePreparationError.unsupportedFormat
@@ -49,7 +54,7 @@ extension AetherEngine {
                 url: track.url, httpHeaders: [:], preserveASSMarkup: loadedOptions.preserveASSMarkup, preparationPolicy: policy)
             try Task.checkCancellation()
             guard generation == loadGeneration, intent == externalSubtitleIntentGeneration,
-                  state == .playing || state == .paused else {
+                  isPreparableSessionState else {
                 throw ExternalSubtitlePreparationError.stale
             }
             guard !decoded.cues.isEmpty else { throw ExternalSubtitlePreparationError.empty }
@@ -78,7 +83,7 @@ extension AetherEngine {
         guard !Task.isCancelled else { throw ExternalSubtitlePreparationError.cancelled }
         guard prepared.owner === self, prepared.generation == loadGeneration,
               prepared.intent == externalSubtitleIntentGeneration,
-              state == .playing || state == .paused,
+              isPreparableSessionState,
               let decoded = prepared.result else { throw ExternalSubtitlePreparationError.stale }
         let existingID = prepared.registeredID
         if let existingID, externalSubtitleRegistry[existingID] != prepared.track {
@@ -109,6 +114,7 @@ extension AetherEngine {
             secondarySidecarASSHeader = decoded.assHeader
             isLoadingSecondarySubtitles = false
         } else {
+            cancelSubtitleOCRWorker()
             cancelSidecarTask()
             clearSubtitleDrainTarget(channel: .primary, reason: .sidecarSelected)
             activeEmbeddedSubtitleStreamIndex = -1
@@ -122,6 +128,10 @@ extension AetherEngine {
             sidecarASSHeader = decoded.assHeader
             isLoadingSubtitles = false
         }
+        EngineLog.emit("[AetherEngine] overlay fed by prepared sidecar: id=\(info.id) "
+                       + "channel=\(secondary ? "secondary" : "primary") (\(decoded.cues.count) cues)",
+                       category: .engine)
+        if !secondary && nativeSubtitleRenderingRequested { setNativeSubtitleRendering(true) }
         return info
     }
 }

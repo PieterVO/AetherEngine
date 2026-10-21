@@ -12,6 +12,21 @@ the public-API contract.
 
 ### Added
 
+- **`prepareExternalSubtitle` / `commitExternalSubtitle`: a downloaded sidecar is decoded before
+  it replaces the selection (#829, thanks @orut34iop).** A host picking an external subtitle had to
+  switch to it before knowing the file decodes. Preparation decodes a local SRT, WebVTT, ASS or SSA
+  file within `ExternalSubtitlePreparationPolicy` limits and touches no track, cue or preference;
+  the commit publishes the decoded cues once and reads nothing. A failed preparation keeps the old
+  selection, and a newer selection on either channel, a removal, stop or a new load turns an older
+  candidate stale. Ordinary selection is unchanged.
+
+- **`LoadOptions.softwarePacketCacheStorage`: a host can choose where the software path keeps
+  its packets (#827, thanks @orut34iop).** Seekable software VOD caches compressed packets in
+  purgeable memory on tvOS and in session files elsewhere (#776). `.disk` and `.memory` now select
+  either store on any platform, with the same budgets, volume safeguards and eviction as the
+  default; `.automatic` keeps the platform policy. A reload carries the choice over. Local files
+  that bypass the cache, live DVR and native HLS are unchanged.
+
 - **`secondarySidecarASSHeader`: a secondary ASS sidecar keeps its markup and script header
   (#826, thanks @orut34iop).** The secondary sidecar decode ignored `preserveASSMarkup` and
   dropped the header, while the embedded secondary path already honoured the option. It now
@@ -57,6 +72,14 @@ the public-API contract.
   since 7.37.0 for scripts written when `play` turned the dual-layer route on by itself.
 
 ### Tests and CI
+
+- **The memory packet store's history tests no longer race the kernel (#819, thanks @yucelokan).**
+  Consumed chunks are volatile VM, so under a full suite's memory pressure the kernel could empty
+  them between a test's `pop()` and its next line, failing a cursor restore, a still walk or a
+  seek-back hit at random. An internal `kernelMayPurge: false` on `SoftwarePacketMemoryFIFO` keeps
+  that history resident at the kernel level while every count and state transition still treats it
+  as volatile, so only `purgeHistoryForTesting` empties it. The tests that re-read history use it,
+  the purge and residency tests keep real kernel purging. No change to the store in playback.
 
 - `SoftwarePacketMemoryFIFOTests` blocks a thread and now runs off the cooperative pool, so the
   one-thread CI step cannot starve the other suites on it.
@@ -198,24 +221,7 @@ the public-API contract.
   bed as lossy APAC that tvOS sends to an Atmos receiver as Dolby MAT. No behaviour change (#802,
   thanks @aravindhsampath).
 
-- **The memory packet store's history tests no longer race the kernel (#819, thanks @yucelokan).**
-  Consumed chunks are volatile VM, so under a full suite's memory pressure the kernel could empty
-  them between a test's `pop()` and its next line, failing a cursor restore, a still walk or a
-  seek-back hit at random. An internal `kernelMayPurge: false` on `SoftwarePacketMemoryFIFO` keeps
-  that history resident at the kernel level while every count and state transition still treats it
-  as volatile, so only `purgeHistoryForTesting` empties it. The tests that re-read history use it,
-  the purge and residency tests keep real kernel purging. No change to the store in playback.
-
 ### Added
-
-- **`LoadOptions.softwarePacketCacheStorage`: a host can choose where the software path keeps
-  its packets (#827, thanks @orut34iop).** Seekable software VOD caches compressed packets in
-  purgeable memory on tvOS and in session files elsewhere (#776). `.disk` and `.memory` now select
-  either store on any platform, with the same budgets, volume safeguards and eviction as the
-  default; `.automatic` keeps the platform policy. A reload carries the choice over. Local files
-  that bypass the cache, live DVR and native HLS are unchanged.
-
-- Opt-in external subtitle preparation and single-use commit/discard: decode a bounded local text sidecar before changing the active selection. Configurable preparation limits and owner/session/selection-intent checks preserve the previous selection on failure; commit performs no file read.
 
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
   `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /

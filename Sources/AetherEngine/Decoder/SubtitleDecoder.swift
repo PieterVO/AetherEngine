@@ -339,7 +339,7 @@ enum SubtitleDecoder {
                 var flushSub = AVSubtitle()
                 var gotFlush: Int32 = 0
                 let flushRet = avcodec_decode_subtitle2(codecCtx, &flushSub, &gotFlush, &flushPkt)
-                if preparationPolicy != nil && flushRet < 0 && flushRet != -541478725 { decodeFailed = true; break }
+                if preparationPolicy != nil && flushRet < 0 && flushRet != FFmpegErr.eof { decodeFailed = true; break }
                 guard flushRet >= 0, gotFlush != 0 else { break }
 
                 let startOffset = Double(flushSub.start_display_time) / 1000.0
@@ -511,7 +511,7 @@ enum SubtitleDecoder {
             let readRet = av_read_frame(fmt, pkt)
             if readRet < 0 {
                 trackedPacketFree(&pktPtr)
-                if preparationPolicy != nil && readRet != -541478725 { throw SubtitleDecoderError.openFailed(code: readRet) }
+                if preparationPolicy != nil && readRet != FFmpegErr.eof { throw SubtitleDecoderError.openFailed(code: readRet) }
                 break
             }
 

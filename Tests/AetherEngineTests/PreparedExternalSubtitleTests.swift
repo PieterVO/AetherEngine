@@ -40,6 +40,19 @@ struct PreparedExternalSubtitleTests {
         #expect(throws: ExternalSubtitlePreparationError.self) { try engine.commitExternalSubtitle(prepared) }
     }
 
+    @Test func aSeekInFlightIsStillTheSameSession() async throws {
+        let engine = try player()
+        let url = try file(text)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        engine.state = .seeking
+        let prepared = try await engine.prepareExternalSubtitle(ExternalSubtitleTrack(url: url))
+        let track = try engine.commitExternalSubtitle(prepared)
+        #expect(engine.activeSubtitleTrackIndex == track.id)
+        let stale = try await engine.prepareExternalSubtitle(ExternalSubtitleTrack(url: url))
+        engine.state = .idle
+        #expect(throws: ExternalSubtitlePreparationError.stale) { try engine.commitExternalSubtitle(stale) }
+    }
+
     @Test func invalidAndPlaylistFilesNeverClearOldSubtitle() async throws {
         for payload in ["not a subtitle", "", "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\nhttps://127.0.0.1:1/video.m3u8\n"] {
             let engine = try player()

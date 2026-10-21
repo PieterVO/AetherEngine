@@ -1406,3 +1406,13 @@ clears the previous sidecar URL. Internal teardown clears active secondary ident
 rebuild's saved selection can restore it; a decode result from an older load cannot republish
 cues or loading state in the new one. This does not add bitmap/ASS capabilities or prohibit
 selecting the same track in both channels.
+
+### Prepared external subtitle selection
+
+`prepareExternalSubtitle(_:policy:)` decodes a downloaded regular SRT, WebVTT, ASS or SSA file without changing the active tracks, preferences or cue lists. `prepareExternalSubtitle(id:policy:)` prepares an existing registry entry without creating another ID. Preparation requires a playing or paused session and returns a MainActor-owned `PreparedExternalSubtitle`; `cueCount` lets the host inspect whether preparation succeeded. The existing `preserveASSMarkup` option governs ASS output.
+
+`ExternalSubtitlePreparationPolicy` bounds `maximumFileBytes` (default 4 MiB), `maximumCueCount` (50,000), `maximumCueBytes` (8,192 UTF-8 bytes) and `maximumTextBytes` (8 MiB). Hosts can supply different positive limits. Ordinary subtitle selection retains its existing behavior. A track registered by a successful prepared commit remembers its policy for later selections. Preparation performs file metadata checks and decoding on the existing blocking worker, not the MainActor. Remote downloading remains the host's responsibility. The local filename must have a supported extension; `formatHint` does not permit arbitrary containers. Keep the file stable during preparation. Non-regular files, symbolic links, unsupported codecs and multistream containers are outside this API.
+
+`commitExternalSubtitle(_:secondary:)` consumes the handle once and publishes already-decoded cues synchronously: it does not reopen or decode the file. `discard()` releases an unused candidate. `ExternalSubtitlePreparationError` distinguishes `unsupportedFormat`, `empty`, `resourceLimit`, `decodeFailed`, `cancelled` and `stale`. A failed preparation or rejected commit preserves the prior selection.
+
+Prepared candidates belong to one engine, one load/stop generation and one shared subtitle-selection intent. A selection or clear on **either** channel, registry removal, a successful commit, stop or a new load invalidates older candidates. Two independently prepared candidates therefore are not an atomic primary/secondary pair: committing one invalidates the other. This prevents a late picker result from replacing a newer user choice. The same registered subtitle remains selectable on both channels; the engine adds no host-specific exclusivity policy.

@@ -215,6 +215,8 @@ the public-API contract.
   default; `.automatic` keeps the platform policy. A reload carries the choice over. Local files
   that bypass the cache, live DVR and native HLS are unchanged.
 
+- Opt-in external subtitle preparation and single-use commit/discard: decode a bounded local text sidecar before changing the active selection. Configurable preparation limits and owner/session/selection-intent checks preserve the previous selection on failure; commit performs no file read.
+
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
   `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /
   `DTSXObjectAudio` traits; without them it stays nil), the 1 Hz snapshot carries an

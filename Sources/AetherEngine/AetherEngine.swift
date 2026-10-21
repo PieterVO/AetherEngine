@@ -2140,6 +2140,8 @@ public final class AetherEngine: ObservableObject {
     /// every suspension point. Without it, a load suspended at the probe/criteria/session-start could resume
     /// after a newer load, orphan the successor's producer+loopback server, and resurrect playback after
     /// dismissal. A superseded load throws CancellationError at the first checkpoint.
+    /// Shared primary/secondary selection intent invalidates prepared candidates.
+    var externalSubtitleIntentGeneration: UInt64 = 0
     var loadGeneration: UInt64 = 0
 
     /// Distinct across engine instances and refreshed whenever teardown invalidates preview work.

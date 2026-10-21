@@ -1001,11 +1001,52 @@ public final class HLSVideoEngine: @unchecked Sendable {
     /// `capRelaxed` (#207) drops the 2 GiB default for a host that explicitly asked to pre-buffer more
     /// than the historical window could hold; the quarter-of-free-space clamp, which is what actually
     /// protects the volume, always applies. Unknown capacity keeps the conservative cap either way.
+    struct SessionCacheBudgetResolution: Sendable, Equatable {
+        let requestedBytes: Int?
+        let volumeSafetyLimitBytes: Int
+        let baseEffectiveBytes: Int
+    }
+
+    /// Resolve a caller-exact session budget without weakening the existing tmp-volume guard.
+    /// nil keeps the historical automatic policy. Unknown capacity stays conservatively bounded
+    /// at 2 GiB even for an explicit aggressive-prefetch request.
+    static func resolveSessionCacheBudget(
+        requestedBytes: Int?,
+        volumeAvailableBytes: Int64?,
+        capRelaxed: Bool = false
+    ) -> SessionCacheBudgetResolution {
+        let conservativeCap = 2 << 30
+        let quarterOfFree = volumeAvailableBytes.map { available -> Int in
+            let quarter = max(Int64(0), available / 4)
+            return Int(min(quarter, Int64(Int.max)))
+        }
+        let safetyLimit = quarterOfFree ?? conservativeCap
+
+        if let requestedBytes {
+            let normalized = max(0, requestedBytes)
+            return SessionCacheBudgetResolution(
+                requestedBytes: normalized,
+                volumeSafetyLimitBytes: safetyLimit,
+                baseEffectiveBytes: min(normalized, safetyLimit)
+            )
+        }
+
+        let effective = capRelaxed
+            ? safetyLimit
+            : min(conservativeCap, safetyLimit)
+        return SessionCacheBudgetResolution(
+            requestedBytes: nil,
+            volumeSafetyLimitBytes: safetyLimit,
+            baseEffectiveBytes: effective
+        )
+    }
+
     static func sessionRetentionBudgetBytes(volumeAvailableBytes: Int64?, capRelaxed: Bool = false) -> Int {
-        let cap = 2 << 30
-        guard let available = volumeAvailableBytes else { return cap }
-        let quarterOfFree = max(0, Int(available / 4))
-        return capRelaxed ? quarterOfFree : min(cap, quarterOfFree)
+        resolveSessionCacheBudget(
+            requestedBytes: nil,
+            volumeAvailableBytes: volumeAvailableBytes,
+            capRelaxed: capRelaxed
+        ).baseEffectiveBytes
     }
 
     /// Largest forward window the default 2 GiB retention budget covers by construction
@@ -1068,7 +1109,8 @@ public final class HLSVideoEngine: @unchecked Sendable {
         sequentialOrigin: Bool = false,
         heldSourceConnection: Bool = false,
         declaredDurationSeconds: Double? = nil,
-        forwardBufferSegments: Int? = nil
+        forwardBufferSegments: Int? = nil,
+        sessionCacheByteBudget: Int? = nil
     ) {
         self.sourceURL = url
         self.requestHeaders = RequestHeaderStore(sourceHTTPHeaders)
@@ -1132,6 +1174,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
         self.customSourceReopenFactory = customSourceReopenFactory
         self.companionAudioReader = companionAudioReader
         self.forwardWindowSegments = Self.clampedForwardWindow(forwardBufferSegments)
+        self.requestedSessionCacheBudgetBytes = sessionCacheByteBudget.map { max(0, $0) }
     }
 
     /// Session forward-buffer window in segments. Drives BOTH the producer's race-ahead
@@ -1145,6 +1188,12 @@ public final class HLSVideoEngine: @unchecked Sendable {
     /// playlist advertises stays resident; the producer-side prefetch park it also feeds is
     /// VOD-only (`advanceMuxer`), so live cannot park on it.
     private var retentionBudgetBytes: Int = 0
+    private let requestedSessionCacheBudgetBytes: Int?
+    private var sessionCacheVolumeSafetyLimitBytes: Int?
+
+    /// Lifecycle snapshots, including async close completion, are delivered here. The host may
+    /// sample `sessionCacheStatus()` for current bytes; this callback is primarily for cleanup.
+    public var onSessionCacheStatusChanged: (@Sendable (SessionCacheStatus) -> Void)?
     /// #687: this session's entry in the process-wide ledger, released on `stop()`.
     private var retentionClaim: RetentionClaims.Claim?
 
@@ -1661,12 +1710,18 @@ public final class HLSVideoEngine: @unchecked Sendable {
             .volumeAvailableCapacityForImportantUsage
         #endif
         let capRelaxed = Self.retentionCapRelaxed(forwardWindowSegments: forwardWindowSegments)
-        // #687: sized from what the other running sessions leave, not from the raw free space.
-        let claim = RetentionClaims.shared.claim(volumeAvailableBytes: availableBytes) {
-            Self.sessionRetentionBudgetBytes(volumeAvailableBytes: $0, capRelaxed: capRelaxed)
+        // Size the custom byte ceiling against capacity left by other running sessions.
+        var resolvedBudget: SessionCacheBudgetResolution?
+        let claim = RetentionClaims.shared.claim(volumeAvailableBytes: availableBytes) { remaining in
+            let budget = Self.resolveSessionCacheBudget(
+                requestedBytes: isLiveSession ? nil : requestedSessionCacheBudgetBytes,
+                volumeAvailableBytes: remaining,
+                capRelaxed: capRelaxed)
+            resolvedBudget = budget
+            return budget.baseEffectiveBytes
         }
+        let budget = resolvedBudget!
         let retentionBudget = claim.bytes
-        self.retentionBudgetBytes = retentionBudget
         let segmentCache = SegmentCache(
             forwardWindow: forwardWindowSegments,
             retentionBudgetBytes: retentionBudget,
@@ -1674,10 +1729,18 @@ public final class HLSVideoEngine: @unchecked Sendable {
             onResidentSetChanged: { [weak self] in self?.noteResidentSetChanged() }
         )
         claim.track { [weak segmentCache] in segmentCache?.totalBytes ?? 0 }
+        restartLock.lock()
+        self.retentionBudgetBytes = retentionBudget
+        self.sessionCacheVolumeSafetyLimitBytes = budget.volumeSafetyLimitBytes
         self.retentionClaim = claim
         self.cache = segmentCache
+        restartLock.unlock()
+        onSessionCacheStatusChanged?(sessionCacheStatus())
+        let requestedBudgetDescription = budget.requestedBytes
+            .map { "\($0 / (1 << 20)) MiB" } ?? "automatic"
         EngineLog.emit(
-            "[HLSVideoEngine] segment retention budget: \(retentionBudget / (1 << 20)) MiB "
+            "[HLSVideoEngine] segment retention budget: requested=\(requestedBudgetDescription) "
+            + "effective=\(retentionBudget / (1 << 20)) MiB "
             + "(volumeAvailable=\(availableBytes.map { "\($0 / (1 << 20)) MiB" } ?? "unknown"), "
             + "forwardWindow=\(forwardWindowSegments) seg"
             + (capRelaxed ? ", opt-in prefetch: default cap relaxed" : "")
@@ -2367,7 +2430,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
             ? srv.playlistURL
             : srv.mediaPlaylistURL
         guard let url = resolvedURL else {
-            stop()
+            stop(reason: .loadFailed)
             throw HLSVideoEngineError.openFailed(reason: "server URL not ready")
         }
         self.servingMasterPlaylist = useMasterPlaylist
@@ -2724,6 +2787,38 @@ public final class HLSVideoEngine: @unchecked Sendable {
     var objectAudioActivity: ObjectAudioActivity? { subsystemSnapshot().audioBridge?.objectAudioActivity }
     var lastAVGapMs: Double { subsystemSnapshot().producer?.lastAVGapMs ?? 0 }
 
+    /// Current route-aware cache contract. Byte fields come from the cache ledger, not segment-count
+    /// estimates. The close-completion snapshot is also delivered through
+    /// `onSessionCacheStatusChanged` because the cache object is intentionally detached at stop.
+    public func sessionCacheStatus() -> SessionCacheStatus {
+        restartLock.lock()
+        let cache = self.cache
+        let budget = retentionBudgetBytes
+        let safetyLimit = sessionCacheVolumeSafetyLimitBytes
+        restartLock.unlock()
+        if let cache {
+            return cache.status(
+                route: .loopbackFMP4,
+                requestedBudgetBytes: requestedSessionCacheBudgetBytes.map { max(0, $0) },
+                baseEffectiveBudgetBytes: budget,
+                volumeSafetyLimitBytes: safetyLimit,
+                capability: isLiveSession ? .unsupported : .active
+            )
+        }
+        return SessionCacheStatus(
+            route: .loopbackFMP4, capability: .inactive,
+            requestedBudgetBytes: requestedSessionCacheBudgetBytes.map { max(0, $0) },
+            volumeSafetyLimitBytes: safetyLimit,
+            baseEffectiveBudgetBytes: budget, playbackSafeFloorBytes: 0,
+            effectiveBudgetBytes: budget, currentResidentBytes: 0,
+            currentForwardBytes: 0, forwardWindowSegments: forwardWindowSegments,
+            backwardWindowSegments: SegmentCache.defaultBackwardWindow,
+            producerParked: false, evictionCount: 0,
+            hardWindowFloorExceeded: false, cleanupReason: nil, cleanupResult: .notRun,
+            lastFailure: nil
+        )
+    }
+
     public func diagnosticStats() -> DiagnosticStats {
         let subs = subsystemSnapshot()
         let abLive = subs.audioBridge?.liveBytes
@@ -3013,7 +3108,10 @@ public final class HLSVideoEngine: @unchecked Sendable {
         return (url, offset)
     }
 
-    public func stop() {
+    /// Preserve the original zero-argument function type for hosts storing a stop callback.
+    public func stop() { stop(reason: .sessionStopped) }
+
+    public func stop(reason: SessionCacheCleanupReason) {
         preparedServe = nil
         cancelResidentRangesPublish()
         // Sodalite#32: drop the tap routes first so a pump still draining its last packets no-ops
@@ -3035,6 +3133,11 @@ public final class HLSVideoEngine: @unchecked Sendable {
         server = nil
         let c = cache
         cache = nil
+        let cacheStatusCallback = onSessionCacheStatusChanged
+        let cacheRequestedBudget = requestedSessionCacheBudgetBytes.map { max(0, $0) }
+        let cacheEffectiveBudget = retentionBudgetBytes
+        let cacheVolumeSafetyLimit = sessionCacheVolumeSafetyLimitBytes
+        let cacheCapability: SessionCacheCapability = isLiveSession ? .unsupported : .active
         compositorPreviewLock.lock()
         compositorPreviewFiles.removeAll()
         compositorHoldURL = nil
@@ -3098,7 +3201,16 @@ public final class HLSVideoEngine: @unchecked Sendable {
             previewBuilder?.close()
             _ = p?.waitForFinish(timeout: 3.0)
             s?.stop()
-            c?.close()
+            if let c {
+                _ = c.close(reason: reason)
+                cacheStatusCallback?(c.status(
+                    route: .loopbackFMP4,
+                    requestedBudgetBytes: cacheRequestedBudget,
+                    baseEffectiveBudgetBytes: cacheEffectiveBudget,
+                    volumeSafetyLimitBytes: cacheVolumeSafetyLimit,
+                    capability: cacheCapability
+                ))
+            }
             ab?.close()
             d?.close()
             sd?.close()
@@ -3108,7 +3220,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
     }
 
     deinit {
-        stop()
+        stop(reason: .sessionStopped)
     }
 
     // MARK: - I-frame rendition (AE#682)

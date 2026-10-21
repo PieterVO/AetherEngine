@@ -373,6 +373,9 @@ extension AetherEngine {
         // stale caller cannot adopt its successor's generation.
         if let generation { try checkLoadCurrent(generation) }
         playbackBackend = .native
+        sessionCacheStatusToken &+= 1
+        diagnostics.sessionCacheStatus = .nativeRemoteHLS(
+            requestedBudgetBytes: options.sessionCacheByteBudget.map { max(0, $0) })
         // #168 follow-up: detect a superseding load()/stop() between the carriage verdict and the reroute.
         let bypassGeneration = generation ?? loadGeneration
 
@@ -889,8 +892,17 @@ extension AetherEngine {
             // the host asked for; without it the flag lasts exactly as long as the pre-opened demuxer.
             heldSourceConnection: loadedOptions.heldSourceConnection,
             declaredDurationSeconds: loadedOptions.declaredDurationSeconds,
-            forwardBufferSegments: loadedOptions.forwardBufferSegments
+            forwardBufferSegments: loadedOptions.forwardBufferSegments,
+            sessionCacheByteBudget: loadedOptions.sessionCacheByteBudget
         )
+        sessionCacheStatusToken &+= 1
+        let cacheStatusToken = sessionCacheStatusToken
+        session.onSessionCacheStatusChanged = { [weak self] status in
+            Task { @MainActor [weak self] in
+                self?.acceptSessionCacheStatus(status, token: cacheStatusToken)
+            }
+        }
+
         // AE#792: the session's live header store, shared with the playback demuxer it was handed, so
         // `updateRequestHeaders(_:)` reaches that reader and every reopen the producer makes. Set before start().
         session.requestHeaders = sessionRequestHeaders
@@ -1330,21 +1342,24 @@ extension AetherEngine {
             // playlist once `resolvePanelRouting` has the settled answer; `panelIsInHDRMode` above was
             // read before that and is not what routes this session.
             try await BlockingWork.detached(priority: .userInitiated) { [session] in
-                try session.prepare()
+                do { try session.prepare() }
+                catch { session.stop(reason: .loadFailed); throw error }
             }.value
             let routesAsHDRPanel: Bool
             do {
                 routesAsHDRPanel = try await resolvePanelRouting()
             } catch {
-                session.stop()
+                session.stop(reason: .loadFailed)
                 throw error
             }
             playbackURL = try await BlockingWork.detached(priority: .userInitiated) { [session] in
-                try session.serve(panelIsInHDRMode: routesAsHDRPanel)
+                do { return try session.serve(panelIsInHDRMode: routesAsHDRPanel) }
+                catch { session.stop(reason: .loadFailed); throw error }
             }.value
         } else {
             playbackURL = try await BlockingWork.detached(priority: .userInitiated) { [session] in
-                try session.start()
+                do { return try session.start() }
+                catch { session.stop(reason: .loadFailed); throw error }
             }.value
         }
         // AirPlay (#86): while external playback is active, serve the loopback over the device's LAN IP so
@@ -1355,7 +1370,7 @@ extension AetherEngine {
         playbackURL = served.url
         // Superseded while starting: stop and unwind before touching shared state.
         if loadGeneration != generation {
-            session.stop()
+            session.stop(reason: .sourceChanged)
             try checkLoadCurrent(generation)
         }
         self.nativeVideoSession = session
@@ -1976,6 +1991,9 @@ extension AetherEngine {
         generation: UInt64,
         elType: String? = nil
     ) async throws {
+        try checkLoadCurrent(generation)
+        sessionCacheStatusToken &+= 1
+        diagnostics.sessionCacheStatus = .inactive
         let deinterlaceMode = loadedOptions.deinterlaceMode
         let waitStarted = DispatchTime.now()
         if let outcome = await DeinterlaceHardwareWarmup.shared.waitIfNeeded(
@@ -2153,6 +2171,7 @@ extension AetherEngine {
         }
         if loadGeneration == generation { recordStartupCheckpoint(.sessionConstructed) }   // #361
         let forwardBufferSegments = loadedOptions.forwardBufferSegments
+        let sessionCacheByteBudget = loadedOptions.sessionCacheByteBudget
         let packetCacheStorage = loadedOptions.softwarePacketCacheStorage
         let dvrRetention = loadedOptions.softwareDVRRetention
         try await BlockingWork.detached(priority: .userInitiated) {
@@ -2173,7 +2192,8 @@ extension AetherEngine {
                 dvrWindowSeconds: dvrWindowSeconds,
                 dvrRetention: dvrRetention,
                 forwardBufferSegments: forwardBufferSegments,
-                packetCacheStorage: packetCacheStorage
+                packetCacheStorage: packetCacheStorage,
+                sessionCacheByteBudget: sessionCacheByteBudget
             )
         }.value
         // Superseded: stop idempotently to tear down the demuxer the detached closure opened, then unwind.
@@ -2509,6 +2529,8 @@ extension AetherEngine {
         stopInternal(resetDisplayCriteria: false,
                      keepNativeHost: !targetSoftwarePath && !mediaServicesWereReset,
                      keepCustomReader: true, keepCurrentItem: keepAudioSwitchItem)
+        sessionCacheStatusToken &+= 1
+        diagnostics.sessionCacheStatus = .inactive
         pendingInPlaceItemHandover = keepAudioSwitchItem
         if mediaServicesWereReset { dropAudioPlayerHostAfterMediaServicesReset() }
         EngineLog.emit("[AetherEngine] reload: stopInternal done (\(elapsedMs(since: reloadStart))ms)", category: .engine)

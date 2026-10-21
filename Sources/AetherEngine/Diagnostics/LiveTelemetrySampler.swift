@@ -457,6 +457,7 @@ final class LiveTelemetrySampler {
         )
         engine.applyLiveTelemetry(snapshot)
         engine.refreshNativeBufferedPosition()
+        await engine.refreshSessionCacheStatus()
     }
 
     /// One line per tick on the native path (#93 post-recovery lag diagnosis). Discriminates

@@ -208,7 +208,12 @@ the public-API contract.
 
 ### Added
 
-- Opt-in `LoadOptions.softwarePacketCacheStorage` selects disk or memory for seekable software VOD. Automatic retains existing platform defaults and all stores retain their current budget and eviction policies.
+- **`LoadOptions.softwarePacketCacheStorage`: a host can choose where the software path keeps
+  its packets (#827, thanks @orut34iop).** Seekable software VOD caches compressed packets in
+  purgeable memory on tvOS and in session files elsewhere (#776). `.disk` and `.memory` now select
+  either store on any platform, with the same budgets, volume safeguards and eviction as the
+  default; `.automatic` keeps the platform policy. A reload carries the choice over. Local files
+  that bypass the cache, live DVR and native HLS are unchanged.
 
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
   `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /

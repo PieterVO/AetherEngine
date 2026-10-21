@@ -26,6 +26,9 @@ final class SoftwarePlaybackHost {
         }
     }
 
+    /// Bounds of the memory store wherever it runs, by platform default or `.memory` (#827).
+    nonisolated static let memoryPacketStoreBounds = (forwardBytes: 96 << 20, historyBytes: 128 << 20)
+
     /// The software VOD packet store's bounds on tvOS, which keeps it in purgeable memory
     /// (`SoftwarePacketMemoryFIFO`) instead of session files; nil elsewhere, where the disk store and
     /// the session retention budget apply. On an Apple TV 4K (A12) the disk store's appends took
@@ -38,7 +41,7 @@ final class SoftwarePlaybackHost {
     /// FEL session on the A12: ~655 MB against ~580 MB with the disk store.
     nonisolated static let memoryPacketStoreBudget: (forwardBytes: Int, historyBytes: Int)? = {
         #if os(tvOS)
-        return (forwardBytes: 96 << 20, historyBytes: 128 << 20)
+        return memoryPacketStoreBounds
         #else
         return nil
         #endif
@@ -54,7 +57,7 @@ final class SoftwarePlaybackHost {
         switch storage {
         case .automatic: memoryBudget = memoryPacketStoreBudget
         case .disk: memoryBudget = nil
-        case .memory: memoryBudget = (forwardBytes: 96 << 20, historyBytes: 128 << 20)
+        case .memory: memoryBudget = memoryPacketStoreBounds
         }
         let segments = HLSVideoEngine.clampedForwardWindow(forwardSegments)
         let fifo: any SoftwarePacketStore

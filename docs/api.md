@@ -1394,3 +1394,13 @@ sidecar renditions. Set `ExternalSubtitleTrack.httpHeaders` or the sidecar call'
 explicitly for a subtitle server requiring authentication at another origin. An explicit empty
 dictionary disables inheritance. Redirects still follow the existing redirect-header policy,
 and certificate trust still uses `EngineTLS.serverTrustEvaluator` independently.
+
+### Secondary subtitles across audio rebuilds
+
+An active registered secondary subtitle survives an audio-track rebuild through its original
+registry id, including `ExternalSubtitleTrack.httpHeaders` and `sourceStreamIndex`. A one-shot
+secondary sidecar still restores through its URL. Switching to an embedded secondary track
+clears the previous sidecar URL. Internal teardown clears active secondary identity while the
+rebuild's saved selection can restore it; a decode result from an older load cannot republish
+cues or loading state in the new one. This does not add bitmap/ASS capabilities or prohibit
+selecting the same track in both channels.

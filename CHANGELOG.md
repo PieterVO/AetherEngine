@@ -33,6 +33,7 @@ the public-API contract.
   field order stands.
 - Native loopback buffered position keeps updating while paused, using the existing wall-clock sampler and the real contiguous segment frontier. Cache holes, eviction and display-axis changes remain visible without advancing playback.
 - External subtitles inherit media request headers only at the same HTTP scheme, host and effective port. Explicit subtitle headers remain authoritative, including an empty set. Primary/secondary overlays, native subtitle stores and remote-HLS sidecar renditions use the same initial-request rule; existing redirect and certificate policies are unchanged.
+- Audio-switch rebuilds restore a registered secondary subtitle through its track id, preserving its explicit headers and container stream index. Embedded selection clears stale sidecar state, internal teardown clears the active external id, and late secondary decode completions cannot publish into another load generation. No subtitle capability or primary/secondary selection restrictions change.
 
 ### Changed
 

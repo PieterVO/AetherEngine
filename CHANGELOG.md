@@ -226,6 +226,10 @@ the public-API contract.
   sync where the first producer starts, the same test mlpdec applies (four substreams, top bit of
   `substream_info`), and renders it when it is Atmos. Costs 679 ms and 44.7 MB of held packets from
   the start of that file at the tvOS probe budget, 30 ms on a resume; nothing for any other track.
+- **Persistent HTTP/1.1 body reads keep the caller's isolation (#837, thanks @brandomoore).**
+  Swift 6.4 can reject the cancellation-handler read in a consuming app with "sending 'current'
+  risks causing data races". `readChunk` and `nextBytes` now inherit the caller's isolation, so the
+  chunked decoder stays single-consumer without an unchecked `Sendable` conformance.
 
 ## [7.40.0] - 2026-10-18
 

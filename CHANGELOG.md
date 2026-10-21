@@ -47,6 +47,13 @@ the public-API contract.
 
 ### Fixed
 
+- **The Atmos output activator runs only on an HDMI route (#834, thanks @badrabbit).** On tvOS
+  it looped its silent Atmos stream beside an APAC programme on every route, AirPlay included. Over
+  AirPlay to a HomePod stereo pair the programme stayed silent after a pause and resume, and after a
+  second pause the picture froze too, until a seek. The activator now plays only while every output
+  port is HDMI, follows route changes, and logs `[AtmosOutputActivator] active|off on route` when
+  that verdict changes. HDMI playback is unchanged.
+
 - **A live HLS channel on the software path no longer stalls once per segment (#813).** The software
   live join placed the picture 4 s behind the newest media, which suits a continuous TS panel but ran
   dry before every segment of a source that delivers 10 s at a time, and the rebuffer resumed the

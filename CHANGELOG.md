@@ -47,6 +47,15 @@ the public-API contract.
 
 ### Fixed
 
+- **Broadcast HLG plays as HLG (#839, thanks @shinier-lichen).** UK broadcast HLG (BBC iPlayer and
+  others) declares a backward-compatible BT.2020 10-bit or BT.709 transfer so an SDR set still shows
+  a picture, and names HLG only in an `alternative_transfer_characteristics` SEI (payloadType 147).
+  The engine read the declared transfer alone, so the display criteria, the route's `VIDEO-RANGE` and
+  the `colr` in `init.mp4` all said SDR. The demuxer now peeks up to 8 video packets after open, for
+  HEVC and H.264 with BT.2020 primaries and such a transfer only, and an SEI naming HLG makes the
+  stream HLG for every consumer: load, `probe(url:)` and a live reopen. Logged as
+  `[Demuxer] AE#839 ... the stream is HLG`.
+
 - **The Atmos output activator runs only on an HDMI route (#834, thanks @badrabbit).** On tvOS
   it looped its silent Atmos stream beside an APAC programme on every route, AirPlay included. Over
   AirPlay to a HomePod stereo pair the programme stayed silent after a pause and resume, and after a

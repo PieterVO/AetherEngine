@@ -722,6 +722,7 @@ public final class Demuxer: @unchecked Sendable {
         refreshStreamTableLocked()
         accessLock.unlock()
         reportOpenStage(.streamsProbed)
+        promoteAlternativeTransferHLG()
     }
 
     /// Open a custom `IOReader` source. `formatHint` disambiguates probing when
@@ -935,6 +936,7 @@ public final class Demuxer: @unchecked Sendable {
         // the cold-start state that only exists to serve them. Deliberately after probeStreams:
         // find_stream_info is where the trailing-index ping-pong lives, not avformat_open_input.
         avioProvider?.markOpenPhaseFinished()
+        promoteAlternativeTransferHLG()
     }
 
     /// AE#585: bracket the host's bounded index pass (the cue prewarm and the cursor reset that
@@ -1274,6 +1276,53 @@ public final class Demuxer: @unchecked Sendable {
         return text.allSatisfy { $0.isASCII && !$0.isNewline && $0 != "\0" }
             ? text
             : String(format: "0x%08X", tag)
+    }
+
+    /// AE#839: video packets read for the alternative-transfer SEI before the declared transfer is
+    /// believed. Broadcast HLG repeats it on every IRAP and the first packet is one, so a handful is
+    /// generous, and at the head of a container they are packets `find_stream_info` already queued.
+    static let alternativeTransferVideoPacketBudget = 8
+    /// The same scan's cap on packets of any stream, so interleaved audio cannot stretch it.
+    static let alternativeTransferPacketBudget = 64
+
+    /// AE#839: a stream that declares a backward-compatible transfer and names HLG in an
+    /// `alternative_transfer_characteristics` SEI is HLG, and its `codecpar` says so from here on.
+    /// Done in the demuxer rather than at a probe site so every reader of `color_trc` agrees: format
+    /// detection, the display criteria, `CodecRoutePolicy`'s video range, the muxer's `colr`, the static
+    /// `probe(url:)` and a live reopen. Peeks, so playback still gets every packet it looked at.
+    private func promoteAlternativeTransferHLG() {
+        guard !openProfile.skipStreamInfo else { return }
+        let index = videoStreamIndex
+        typealias Gate = (declared: AVColorTransferCharacteristic, codec: A53SEIParser.CodecKind,
+                          framing: A53SEIParser.NALFraming)
+        guard let gate = withStream(at: index, { stream -> Gate? in
+            guard stream.pointee.discard != AVDISCARD_ALL, let par = stream.pointee.codecpar,
+                  AlternativeTransferSEI.declaredTransferMayHideHLG(
+                      codecID: par.pointee.codec_id, primaries: par.pointee.color_primaries,
+                      transfer: par.pointee.color_trc) else { return nil }
+            let codec: A53SEIParser.CodecKind = par.pointee.codec_id == AV_CODEC_ID_HEVC ? .hevc : .h264
+            return (par.pointee.color_trc, codec, A53SEIParser.nalFraming(
+                codec: codec, extradata: par.pointee.extradata, size: Int(par.pointee.extradata_size)))
+        }) ?? nil else { return }
+        let (declared, codec, framing) = gate
+        var videoPackets = 0
+        var preferred: UInt8?
+        try? peekPackets(maxPackets: Self.alternativeTransferPacketBudget) { packet in
+            guard packet.pointee.stream_index == index, let data = packet.pointee.data else { return false }
+            videoPackets += 1
+            preferred = AlternativeTransferSEI.preferredTransfer(
+                in: data, size: Int(packet.pointee.size), codec: codec, framing: framing)
+            return preferred != nil || videoPackets >= Self.alternativeTransferVideoPacketBudget
+        }
+        guard preferred == AlternativeTransferSEI.hlgTransfer,
+              withStream(at: index, { $0.pointee.codecpar?.pointee.color_trc = AVCOL_TRC_ARIB_STD_B67 }) != nil
+        else { return }
+        let declaredName = av_color_transfer_name(declared).map { String(cString: $0) } ?? "\(declared.rawValue)"
+        EngineLog.emit(
+            "[Demuxer] AE#839 stream=\(index): alternative transfer SEI names HLG over a declared "
+            + "trc=\(declaredName); the stream is HLG (videoPackets=\(videoPackets))",
+            category: .demux
+        )
     }
 
     /// Run a bounded `avformat_find_stream_info` on an already-open context (#87). Used by the subtitle

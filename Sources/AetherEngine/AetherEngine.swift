@@ -1430,6 +1430,10 @@ public final class AetherEngine: ObservableObject {
     /// Nil for SRT/VTT and when markup preservation is off.
     @Published public internal(set) var sidecarASSHeader: String? = nil
 
+    /// ASS script header for the active secondary sidecar when preserveASSMarkup is enabled.
+    /// Independent of the primary header; nil for other formats and after clearing or stopping.
+    @Published public internal(set) var secondarySidecarASSHeader: String? = nil
+
     /// Cues for the secondary subtitle track (#47). Text-only (bitmap rejected); independent of primary.
     @Published public internal(set) var secondarySubtitleCues: [SubtitleCue] = []
     @Published public internal(set) var isLoadingSecondarySubtitles: Bool = false
@@ -7935,6 +7939,7 @@ public final class AetherEngine: ObservableObject {
         subtitleCues = []
         pgsStaleArrivalGates = [:]   // #100: both channels; a hold never survives the session
         sidecarASSHeader = nil
+        secondarySidecarASSHeader = nil
         isLoadingSubtitles = false
         nativeSubtitleTrackTable = []
         nativeSubtitleReapplyOrdinal = nil

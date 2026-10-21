@@ -198,6 +198,8 @@ the public-API contract.
 
 ### Added
 
+- Secondary ASS sidecars honor `preserveASSMarkup` and publish their own `secondarySidecarASSHeader`, independently cleared with the channel and rebuilt on reload. Default text/rich-text output is unchanged.
+
 - **`LiveTelemetry.objectAudio`: how many Atmos objects play, and how many overhead.** While
   `objectAudioRendering` plays TrueHD Atmos or DTS:X (a build with the `TrueHDObjectAudio` /
   `DTSXObjectAudio` traits; without them it stays nil), the 1 Hz snapshot carries an

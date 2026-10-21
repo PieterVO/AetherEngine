@@ -817,7 +817,8 @@ suppressing `AVPlayerItemLegibleOutput` to keep the measurement running.
 | `$subtitleCues` | `[SubtitleCue]`: `.text`, `.richText([SubtitleTextRun])`, or `.image(SubtitleImage)`, with an optional `SubtitleTextPlacement`. Cues carry raw source PTS. |
 | `$isSubtitleActive`, `$isLoadingSubtitles` | State for a subtitle toggle: active is the selection, loading is a sidecar or side-demuxer pass in flight. |
 | `$activeSubtitleTrackIndex` | The selected id, including one resolved by `preferredSubtitleLanguages`. |
-| `$sidecarASSHeader` | The ASS header for the active sidecar, for hosts rendering authored styling. |
+| `$sidecarASSHeader` | The ASS header for the active primary sidecar, for hosts rendering authored styling. |
+| `$secondarySidecarASSHeader` | Independent ASS header for the active secondary sidecar when `preserveASSMarkup` is enabled. Pair with `secondarySubtitleCues`, never the primary header: script resolution and styles can differ. Nil by default, for non-ASS formats, and after selection changes, clearing or stopping. Session-preserving reloads decode it again with the restored track. |
 | `selectSecondarySubtitleTrack(index:)`, `selectSecondarySidecarSubtitle(url:httpHeaders:)`, `clearSecondarySubtitle()`, `$secondarySubtitleCues`, `$isSecondarySubtitleActive`, `$isLoadingSecondarySubtitles` | The independent second track (bilingual / language learning). |
 | `addExternalSubtitleTrack(_:)`, `removeExternalSubtitleTrack(id:)` | Register or unregister an `ExternalSubtitleTrack` at runtime. Returns the `TrackInfo` it was listed as. Tracks added after load are overlay-only; declare them in `LoadOptions.externalSubtitles` to have them join the native renditions. |
 | `selectSidecarSubtitle(url:httpHeaders:)` | One-shot sidecar decode without listing a track. Prefer `addExternalSubtitleTrack` + `selectSubtitleTrack`, which keeps the track listed and `activeSubtitleTrackIndex` populated. nil headers forward `LoadOptions.httpHeaders`. |

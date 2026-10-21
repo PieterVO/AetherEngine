@@ -197,6 +197,7 @@ extension AetherEngine {
         // own channel; the immediate tick backfills it.
         isSecondarySubtitleActive = true
         secondarySubtitleCues = []
+        secondarySidecarASSHeader = nil
         pgsStaleArrivalGates[.secondary]?.reset()   // #100
         activeSecondaryEmbeddedSubtitleStreamIndex = Int32(index)
         subtitleDrainTargets[.secondary] = Int32(index)
@@ -1642,19 +1643,21 @@ extension AetherEngine {
         loadedSecondarySidecarURL = url
         isSecondarySubtitleActive = true
         secondarySubtitleCues = []
+        secondarySidecarASSHeader = nil
         pgsStaleArrivalGates[.secondary]?.reset()   // #100
         isLoadingSecondarySubtitles = true
 
         let effectiveHeaders = Self.resolvedSubtitleHeaders(
             for: url, explicit: httpHeaders, mediaURL: loadedURL,
             mediaHeaders: loadedOptions.httpHeaders)
+        let preserveASS = loadedOptions.preserveASSMarkup
         let sessionGeneration = loadGeneration
         secondarySidecarTask = Task { [weak self] in
             let result: SidecarDecodeResult
             do {
-                // Secondary is plain text only (never drives libass, mirroring embedded secondary #47).
                 result = try await SubtitleDecoder.decodeFile(
-                    url: url, httpHeaders: effectiveHeaders, sourceStreamIndex: sourceStreamIndex)
+                    url: url, httpHeaders: effectiveHeaders, preserveASSMarkup: preserveASS,
+                    sourceStreamIndex: sourceStreamIndex)
             } catch {
                 EngineLog.emit("[AetherEngine] secondary sidecar decode failed: \(error)", category: .engine)
                 await MainActor.run {
@@ -1668,6 +1671,7 @@ extension AetherEngine {
                 guard !Task.isCancelled, let self = self,
                           self.loadGeneration == sessionGeneration else { return }
                 guard self.isSecondarySubtitleActive else { return }
+                self.secondarySidecarASSHeader = result.assHeader
                 self.secondarySubtitleCues = result.cues
                 self.isLoadingSecondarySubtitles = false
             }
@@ -1752,6 +1756,7 @@ extension AetherEngine {
         loadedSecondarySidecarURL = nil
         isSecondarySubtitleActive = false
         secondarySubtitleCues = []
+        secondarySidecarASSHeader = nil
         pgsStaleArrivalGates[.secondary]?.reset()   // #100
         isLoadingSecondarySubtitles = false
     }

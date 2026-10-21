@@ -26,6 +26,49 @@ final class SoftwarePlaybackHost {
         }
     }
 
+    /// Only codec sample geometry is admitted, never the WMA bitrate fallback in
+    /// av_get_audio_frame_duration2. Parameters are copied before the read-ahead thread starts.
+    /// Variable/packed or reservoir-dependent packet layouts stay strict until proven separately.
+    nonisolated static func audioPacketTiming(_ parameters: UnsafeMutablePointer<AVCodecParameters>)
+        -> SoftwareAudioPacketTiming? {
+        let p = parameters.pointee
+        guard p.sample_rate > 0, p.sample_rate <= 768_000 else { return nil }
+        let samples: Int32
+        switch p.codec_id {
+        case AV_CODEC_ID_AC3: samples = 1536
+        case AV_CODEC_ID_MP1: samples = 384
+        case AV_CODEC_ID_MP2: samples = 1152
+        case AV_CODEC_ID_MP3: samples = p.sample_rate <= 24000 ? 576 : 1152
+        case AV_CODEC_ID_AAC, AV_CODEC_ID_EAC3:
+            // Includes known AAC 960/1024/SBR geometry. A packet with a different declared
+            // duration fails the sample-clock admission instead of inheriting the initial size.
+            guard p.frame_size > 1 else { return nil }
+            samples = p.frame_size
+        case AV_CODEC_ID_WMAV1, AV_CODEC_ID_WMAV2:
+            let flagOffset = p.codec_id == AV_CODEC_ID_WMAV1 ? 2 : 4
+            guard p.sample_rate <= 50_000, p.ch_layout.nb_channels > 0,
+                  p.ch_layout.nb_channels <= 2, p.block_align > 0,
+                  Int(p.extradata_size) >= flagOffset + 2, let data = p.extradata else { return nil }
+            let flags = UInt16(data[flagOffset]) | (UInt16(data[flagOffset + 1]) << 8)
+            // A reservoir superframe can depend on the previous packet and yield several
+            // frames: byte length/bitrate is not proof of its sample count.
+            guard flags & 2 == 0 else { return nil }
+            if p.sample_rate <= 16_000 { samples = 512 }
+            else if p.sample_rate <= 22_050 || (p.codec_id == AV_CODEC_ID_WMAV1 && p.sample_rate <= 32_000) {
+                samples = 1024
+            } else { samples = 2048 }
+            return .init(sampleRate: p.sample_rate,
+                         layout: .fixed(samples: samples, packetBytes: Int(p.block_align)))
+        default:
+            let bits = av_get_exact_bits_per_sample(p.codec_id)
+            guard bits > 0, bits % 8 == 0, p.ch_layout.nb_channels > 0,
+                  p.ch_layout.nb_channels <= 64 else { return nil }
+            return .init(sampleRate: p.sample_rate,
+                         layout: .pcm(bytesPerSampleFrame: Int(bits / 8) * Int(p.ch_layout.nb_channels)))
+        }
+        return .init(sampleRate: p.sample_rate, layout: .fixed(samples: samples, packetBytes: nil))
+    }
+
     /// Bounds of the memory store wherever it runs, by platform default or `.memory` (#827).
     nonisolated static let memoryPacketStoreBounds = (forwardBytes: 96 << 20, historyBytes: 128 << 20)
 
@@ -1393,7 +1436,8 @@ final class SoftwarePlaybackHost {
             let audio: SoftwarePacketReadAhead.Stream? = audioStreamIndex >= 0
                 ? dem.stream(at: audioStreamIndex).map {
                     .init(index: audioStreamIndex, numerator: $0.pointee.time_base.num,
-                          denominator: $0.pointee.time_base.den)
+                          denominator: $0.pointee.time_base.den,
+                          audioTiming: Self.audioPacketTiming($0.pointee.codecpar))
                 } : nil
             let initialSourceClock = initialClockTime.seconds
             let videoReorderDepth = Self.presentationReorderDepth(codecID: vCodecID)

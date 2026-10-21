@@ -81,6 +81,8 @@ the public-API contract.
 - `aetherctl play` rejects `--no-fel` and `--no-dual-layer` as stray flags. They were accepted as no-ops
   since 7.37.0 for scripts written when `play` turned the dual-layer route on by itself.
 
+- Software packet-cache audio coverage joins timestamp quantization only when admitted codec sample geometry supports one continuous rational sample clock. Unknown layouts, real gaps and accumulating drift remain strict; duration-less audio keeps its successor coverage.
+
 ### Tests and CI
 
 - **The memory packet store's history tests no longer race the kernel (#819, thanks @yucelokan).**

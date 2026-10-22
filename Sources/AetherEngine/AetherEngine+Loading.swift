@@ -1897,6 +1897,15 @@ extension AetherEngine {
         if !isLive, loadedOptions.sequentialOrigin {
             pendingPreReadySeek = PendingPreReadySeek(seconds: 0.0, origin: .host)
         }
+        // AE#851: build the first live window BEFORE AVPlayer is handed the item. Withheld behind the
+        // playlist request instead, the wait runs on AVPlayer's playlist timer, which gives up after
+        // about 20 s on tvOS (-16839, measured in the simulator) and failed every cushion a 1x origin
+        // could not fill in that time. The gate is the same one the request would have waited on, so
+        // the request is then answered at once.
+        if isLive, let provider = nativeVideoSession?.provider {
+            await Self.awaitFirstLiveWindow(provider)
+            try checkLoadCurrent(generation)
+        }
         // AE#158: consume-and-reset so only the load() that armed the handover swaps in place; audio-switch
         // and recovery reloads keep their own contracts.
         let inPlaceHandover = pendingInPlaceItemHandover

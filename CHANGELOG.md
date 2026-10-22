@@ -64,6 +64,38 @@ the public-API contract.
   beside an APAC programme. Sinks that need the silent Atmos stream to show Atmos for APAC were
   left without it.
 
+## [7.46.0] - 2026-10-22
+
+### Added
+
+- **`ThreadCPUSampler` and a `cpuprobe` line next to every 30 s memprobe.** It states the CPU time
+  each thread group consumed over the window, as a share of one core, with the main thread and the
+  time of threads that ended inside the window on their own fields:
+  `cpuprobe t=30s cpu=87% main=6% threads=42 top=AetherEngine.HLSSegmentProducer.pump:29 ...`.
+  Consumed time, not the scheduler's decaying `cpu_usage`, so the figures add up. A field log from a
+  box nobody here owns is now a coarse profile instead of a guess. The class is public so a host can
+  sample its UI the same way outside a playback session.
+
+### Fixed
+
+- **A live edge cushion deeper than about 20 s now starts on tvOS (AE#851).** The loopback built
+  its first live window behind AVPlayer's first playlist request, so the whole wait ran on
+  AVPlayer's playlist timer, which gives up after about 20 s on tvOS (`-16839`, then `-1008`). A
+  raw MPEG-TS channel that fills at 1x after its connect burst therefore never started with a 30 s
+  cushion, and the plain `.standard` holdback (19.2 s on a strict-realtime origin with
+  TARGETDURATION 6) sat right at the limit. The engine now waits out the same gate before the item
+  is attached, so the request is answered at once and the session still plays the full cushion
+  behind the edge (29 s with 30 s asked, `aetherctl live --realtime --preroll 0`).
+
+- **A bitmap subtitle track no longer makes the forward prefetch read four and a half minutes
+  ahead while the viewer stays fullscreen.** Selecting a PGS / DVB / DVD track armed the OCR worker
+  for its native rendition at once, and with it the prefetch lead of 270 s; on Matroska that reader
+  pulls every cluster, so a 4K remux paid ten times the prefetch bytes of the overlay-only lead (434
+  against 17 MB in 90 s), and an Apple TV 4K (1st generation) dropped frames on an 89 Mbit/s source.
+  The worker now follows the native selection (PiP, AirPlay, external display), and the native
+  select waits until it has recognized the whole window AVKit fetches in one burst, so the
+  rendition is never handed over partly empty.
+
 ## [7.45.0] - 2026-10-21
 
 ### Added

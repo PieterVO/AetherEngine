@@ -7475,6 +7475,8 @@ public final class AetherEngine: ObservableObject {
             return
         }
         activeTransportHost?.setRate(clamped)
+        // A rate of zero parks the renderer path without a state change; the activator follows it.
+        atmosOutputActivator?.refresh()
     }
 
     // MARK: - Audio / subtitle track selection

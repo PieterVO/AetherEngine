@@ -200,8 +200,10 @@ extension AetherEngine {
             let activator = atmosOutputActivator ?? AtmosOutputActivator()
             atmosOutputActivator = activator
             activator.attachRenderer { [weak self, weak host] in
-                guard let self, let host, self.softwareHost === host else { return nil }
-                return Self.softwareAtmosOutputPlaying(self.state)
+                guard let self, let host, self.softwareHost === host,
+                      let playing = Self.softwareAtmosOutputPlaying(self.state) else { return nil }
+                // `setRate(0)` parks the host without moving `state` off `.playing`.
+                return playing && (self.state != .playing || host.isPlaying)
             }
         } else {
             atmosOutputActivator?.detach()

@@ -133,7 +133,8 @@ final class AtmosOutputActivator {
         let playing: Bool
         if let rendererIsPlaying {
             guard let state = rendererIsPlaying() else {
-                release()
+                // The session is gone: drop the route observer with the stream, not just the stream.
+                detach()
                 return
             }
             playing = state

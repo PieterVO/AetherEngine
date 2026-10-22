@@ -5742,6 +5742,9 @@ public final class AetherEngine: ObservableObject {
         if state == .paused || state == .loading {
             state = .playing
         }
+        // A resume that leaves `state` at `.playing` (the end of an audio interruption) restarts the
+        // renderer without a state change; the Atmos output activator follows the renderer, so tell it.
+        atmosOutputActivator?.refresh()
         clampLiveResumeIfBehindWindow()
     }
 

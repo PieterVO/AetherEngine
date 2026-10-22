@@ -12,6 +12,15 @@ the public-API contract.
 
 ### Fixed
 
+- **A live edge cushion deeper than about 20 s now starts on tvOS (AE#851).** The loopback built
+  its first live window behind AVPlayer's first playlist request, so the whole wait ran on
+  AVPlayer's playlist timer, which gives up after about 20 s on tvOS (`-16839`, then `-1008`). A
+  raw MPEG-TS channel that fills at 1x after its connect burst therefore never started with a 30 s
+  cushion, and the plain `.standard` holdback (19.2 s on a strict-realtime origin with
+  TARGETDURATION 6) sat right at the limit. The engine now waits out the same gate before the item
+  is attached, so the request is answered at once and the session still plays the full cushion
+  behind the edge (29 s with 30 s asked, `aetherctl live --realtime --preroll 0`).
+
 - **A bitmap subtitle track no longer makes the forward prefetch read four and a half minutes
   ahead while the viewer stays fullscreen.** Selecting a PGS / DVB / DVD track armed the OCR worker
   for its native rendition at once, and with it the prefetch lead of 270 s; on Matroska that reader

@@ -971,10 +971,25 @@ final class SoftwarePlaybackHost {
     /// AE#641: an unresolved index is not a source without audio. On VOD nothing falls back past
     /// `av_find_best_stream`, which passes over an audio stream whose parameters the probe left empty,
     /// so the source's own streams decide which of the two silences this is.
+    ///
+    /// The route decides the rest, in the loopback route's terms: the PCM decode is `.decoded`, compressed
+    /// E-AC-3 JOC reaches the renderer as authored (`.streamCopy`), and TrueHD Atmos / DTS:X rendered into
+    /// a bed and re-encoded as APAC is `.bridged`, which is how the loopback route reports the same APAC.
     nonisolated static func audioDelivery(resolvedAudioIndex: Int32, decoderOpened: Bool,
-                                          sourceCarriesAudio: Bool) -> AudioDelivery {
+                                          sourceCarriesAudio: Bool,
+                                          route: SoftwareAtmosRoute = .pcm) -> AudioDelivery {
         guard resolvedAudioIndex >= 0 else { return sourceCarriesAudio ? .droppedNoPipeline : .noAudioInSource }
-        return decoderOpened ? .decoded : .droppedNoPipeline
+        guard decoderOpened else { return .droppedNoPipeline }
+        switch route {
+        case .pcm: return .decoded
+        case .compressedEAC3JOC: return .streamCopy
+        case .apac: return .bridged
+        }
+    }
+
+    /// Whether this session plays audio at all, on whichever route.
+    var deliversAudio: Bool {
+        audioDelivery == .decoded || audioDelivery == .bridged || audioDelivery == .streamCopy
     }
 
     /// Resolve the audio stream index for a SW-host session. `av_find_best_stream` (`bestStream`)
@@ -1373,7 +1388,8 @@ final class SoftwarePlaybackHost {
         // source without audio.
         self.audioDelivery = Self.audioDelivery(resolvedAudioIndex: resolvedAudioIdx,
                                                 decoderOpened: self.audioDecoder != nil,
-                                                sourceCarriesAudio: dem.firstAudioStreamIndexByType >= 0)
+                                                sourceCarriesAudio: dem.firstAudioStreamIndexByType >= 0,
+                                                route: self.audioRoute)
         // #112 rework: capture embedded subtitle stream indices + time bases for the demux
         // loop's subtitle tap dispatch.
         var subIndices: Set<Int32> = []

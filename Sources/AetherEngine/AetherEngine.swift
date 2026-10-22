@@ -5543,7 +5543,8 @@ public final class AetherEngine: ObservableObject {
                 // label claimed one for a session that had dropped its audio and gone video-only.
                 activeAudioDecoder = Self.softwareAudioDecoderLabel(
                     audioTracks: probedAudioTracks,
-                    activeIndex: softwareHost?.audioStreamIndex ?? -1
+                    activeIndex: softwareHost?.audioStreamIndex ?? -1,
+                    route: softwareHost?.audioRoute ?? .pcm
                 )
                 presentCurrentLayer()
                 // #124: a paused mount skips autostart; loadSoftware's host.$isReady settles .paused.
@@ -8349,7 +8350,7 @@ public final class AetherEngine: ObservableObject {
         let action = Self.backgroundAction(
             isAudioBackend: audioAVPlayerActive || audioHost != nil,
             hasSoftwareHost: softwareHost != nil,
-            softwareHostHasAudio: softwareHost?.audioDelivery == .decoded,
+            softwareHostHasAudio: softwareHost?.deliversAudio == true,
             keepVideoAlive: keepAlive,
             pipActive: pictureInPictureActive,
             state: state
@@ -8481,7 +8482,7 @@ public final class AetherEngine: ObservableObject {
         return Self.backgroundAction(
             isAudioBackend: audioAVPlayerActive || audioHost != nil,
             hasSoftwareHost: softwareHost != nil,
-            softwareHostHasAudio: softwareHost?.audioDelivery == .decoded,
+            softwareHostHasAudio: softwareHost?.deliversAudio == true,
             keepVideoAlive: keepAlive,
             pipActive: pictureInPictureActive,
             state: state

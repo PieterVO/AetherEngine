@@ -44,7 +44,13 @@ the public-API contract.
   profile the probe missed read from its own major sync, as on the loopback route). Other audio,
   live streams and `.off` still decode to PCM, and a TrueHD or DTS track kept on PCM says why in the
   log. The automatic audio pick now prefers a TrueHD Atmos or DTS:X track on the software host too. A
-  renderer error on these routes is logged in release builds.
+  renderer error on these routes is logged in release builds. On tvOS the Atmos output activator
+  runs beside these routes on HDMI as it does beside the loopback route's APAC, so a sink that needs
+  it shows Atmos for the software host too. `audioDelivery` reports them as `.bridged` (APAC) and
+  `.streamCopy` (compressed E-AC-3 JOC), and `activeAudioDecoder` names them (for example
+  "TRUEHD Atmos → APAC 7.1.4"); the PCM decode stays `.decoded`. The clock's "audio is not
+  recovering" fallback waits for the APAC route's first buffer (about 100 TrueHD access units) instead
+  of anchoring every TrueHD load on video after 50 packets.
 - **The renderer paths pause when a removable audio output goes away.** On iOS and tvOS the software
   host and the audio host now pause, as AVPlayer does, when headphones, a Bluetooth device (A2DP, LE,
   HFP), an AirPlay output or a USB output is removed while playing or seeking. HDMI is not one of

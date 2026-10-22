@@ -42,7 +42,9 @@ final class AtmosOutputActivator {
     }
 
     /// `AVAudioSession.Port.HDMI.rawValue`, spelled out so the rule is testable where there is no session.
-    nonisolated static let hdmiPortType = "HDMI"
+    /// It is "HDMIOutput", not "HDMI": spelled "HDMI", the rule matched no real route, and an Apple TV
+    /// on HDMI logged `[AtmosOutputActivator] off on route ports=[HDMIOutput]` with the activator idle.
+    nonisolated static let hdmiPortType = "HDMIOutput"
 
     static func currentOutputPortTypes() -> [String] {
         #if os(iOS) || os(tvOS)

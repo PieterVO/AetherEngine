@@ -56,6 +56,14 @@ the public-API contract.
 - `setRate(0)` disarms the resume after an audio-session interruption on every path, as `pause()`
   does: a session the host set to rate 0 stays paused when the interruption ends.
 
+### Fixed
+
+- **The Atmos output activator runs on HDMI again.** 7.45.0's route rule (#834) compared the output
+  ports against `"HDMI"`, but `AVAudioSession.Port.HDMI` is `"HDMIOutput"`, so it matched no real
+  route and an Apple TV on HDMI logged `[AtmosOutputActivator] off on route ports=[HDMIOutput]`
+  beside an APAC programme. Sinks that need the silent Atmos stream to show Atmos for APAC were
+  left without it.
+
 ## [7.45.0] - 2026-10-21
 
 ### Added

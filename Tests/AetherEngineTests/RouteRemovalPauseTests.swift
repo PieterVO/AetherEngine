@@ -35,8 +35,8 @@ struct RouteRemovalPauseTests {
     @Test("an HDMI route going away does not pause: an ARC / eARC receiver toggling on an Apple TV is not a removal")
     func hdmiDoesNotPause() {
         let removed = AetherEngine.routeChangeReasonOldDeviceUnavailableRaw
-        #expect(!AetherEngine.routeRemovalShouldPause(reasonRaw: removed, previousOutputPortTypes: ["HDMI"]))
-        #expect(!AetherEngine.routeRemovalShouldPause(reasonRaw: removed, previousOutputPortTypes: ["HDMI", "LineOut"]))
+        #expect(!AetherEngine.routeRemovalShouldPause(reasonRaw: removed, previousOutputPortTypes: ["HDMIOutput"]))
+        #expect(!AetherEngine.routeRemovalShouldPause(reasonRaw: removed, previousOutputPortTypes: ["HDMIOutput", "LineOut"]))
     }
 
     #if os(iOS) || os(tvOS)

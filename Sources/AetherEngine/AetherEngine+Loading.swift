@@ -2212,6 +2212,8 @@ extension AetherEngine {
             host.stop()
             try checkLoadCurrent(generation)
         }
+        // The audio route is settled by `load`: an object-audio one keeps the HDMI link in Atmos.
+        followAtmosOutput()
     }
 
     /// Open `AudioPlaybackHost` for an audio-only source. No HLS pipeline, display layer, or display-criteria handshake. Same lifecycle as `loadSoftware`.

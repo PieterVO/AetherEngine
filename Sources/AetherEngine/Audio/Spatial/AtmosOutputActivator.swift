@@ -1,6 +1,7 @@
 import AVFoundation
 
-/// Keeps a tvOS HDMI route in Dolby Atmos while the engine's `AVPlayer` plays an APAC track.
+/// Keeps a tvOS HDMI route in Dolby Atmos while the engine plays an APAC track: through its `AVPlayer`,
+/// or through the software host's sample-buffer audio renderer (the Dolby Vision FEL route).
 ///
 /// tvOS hands APAC to the receiver as Dolby MAT, and some sinks show Dolby Atmos for that on their own.
 /// Not all do: a Samsung HW-Q990C fed by an Apple TV 4K (tvOS 27.2) played APAC without ever showing
@@ -16,6 +17,11 @@ import AVFoundation
 /// #834: it runs only while every output port is HDMI. On an AirPlay route there is no sink indicator
 /// to light, and a second unmuted player restarting beside the programme on every resume left a
 /// HomePod pair silent after a pause, then froze the picture after the second one.
+///
+/// The software host plays APAC (TrueHD Atmos, DTS:X) or compressed E-AC-3 JOC through an
+/// `AVSampleBufferAudioRenderer`, and an Apple TV 4K (tvOS 26.6) whose receiver showed Atmos for the
+/// AVPlayer route's APAC did not show it for the same title's APAC on that renderer. There the activator
+/// follows the host's transport instead of a player (`attachRenderer`).
 @MainActor
 final class AtmosOutputActivator {
     static let silentAtmosStream = Bundle.module.url(forResource: "silent-atmos", withExtension: "mp4")!
@@ -24,6 +30,8 @@ final class AtmosOutputActivator {
     private var looper: AVPlayerLooper?
     private weak var host: AVPlayer?
     private var playsAPAC: @MainActor (AVPlayerItem) -> Bool = { _ in false }
+    /// Set by `attachRenderer`: whether the renderer path is playing (or waiting to), nil once it is gone.
+    private var rendererIsPlaying: (@MainActor () -> Bool?)?
     private var observations: [NSKeyValueObservation] = []
     private var selectionObserver: NSObjectProtocol?
     private var routeObserver: NSObjectProtocol?
@@ -69,6 +77,26 @@ final class AtmosOutputActivator {
                 Self.onMain { self?.update() }
             },
         ]
+        observeRoute()
+    }
+
+    /// Follows a renderer path that plays object audio. `isPlaying` answers true while it plays or waits
+    /// to, false while paused, and nil once the session is gone; the engine calls `refresh()` whenever its
+    /// transport state changes, since a renderer has nothing to observe.
+    func attachRenderer(isPlaying: @escaping @MainActor () -> Bool?) {
+        detach()
+        rendererIsPlaying = isPlaying
+        observeRoute()
+        update()
+    }
+
+    /// Re-reads the renderer path's transport (see `attachRenderer`). A no-op for an attached player.
+    func refresh() {
+        guard rendererIsPlaying != nil else { return }
+        update()
+    }
+
+    private func observeRoute() {
         #if os(iOS) || os(tvOS)
         routeObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil
@@ -84,6 +112,7 @@ final class AtmosOutputActivator {
         if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
         routeObserver = nil
         host = nil
+        rendererIsPlaying = nil
         loggedRouteVerdict = nil
         follow(nil)
     }
@@ -101,9 +130,19 @@ final class AtmosOutputActivator {
     }
 
     private func update() {
-        guard let host, let item = host.currentItem, playsAPAC(item) else {
-            release()
-            return
+        let playing: Bool
+        if let rendererIsPlaying {
+            guard let state = rendererIsPlaying() else {
+                release()
+                return
+            }
+            playing = state
+        } else {
+            guard let host, let item = host.currentItem, playsAPAC(item) else {
+                release()
+                return
+            }
+            playing = host.timeControlStatus != .paused
         }
         let ports = outputPortTypes()
         let routeTakesIt = Self.routeTakesActivator(outputPortTypes: ports)
@@ -118,7 +157,7 @@ final class AtmosOutputActivator {
             release()
             return
         }
-        guard host.timeControlStatus != .paused else {
+        guard playing else {
             player.pause()
             return
         }
@@ -147,17 +186,36 @@ final class AtmosOutputActivator {
 
 extension AetherEngine {
     /// tvOS only: the switch is an HDMI one, and on iOS and macOS a second unmuted player beside the
-    /// engine's would compete with it for Now Playing and the audio session for no gain.
+    /// engine's would compete with it for Now Playing and the audio session for no gain. Follows the
+    /// engine's `AVPlayer`, or else a software host whose audio reaches its renderer as object audio
+    /// (APAC, or compressed E-AC-3 JOC); the PCM decode has no Atmos to signal.
     func followAtmosOutput() {
         #if os(tvOS)
-        guard let player = currentAVPlayer else {
+        if let player = currentAVPlayer {
+            let activator = atmosOutputActivator ?? AtmosOutputActivator()
+            atmosOutputActivator = activator
+            activator.attach(to: player) { [weak self] _ in self?.nativeVideoSession?.audioIsAPAC == true }
+        } else if let host = softwareHost, host.audioRoute != .pcm {
+            let activator = atmosOutputActivator ?? AtmosOutputActivator()
+            atmosOutputActivator = activator
+            activator.attachRenderer { [weak self, weak host] in
+                guard let self, let host, self.softwareHost === host else { return nil }
+                return Self.softwareAtmosOutputPlaying(self.state)
+            }
+        } else {
             atmosOutputActivator?.detach()
-            return
         }
-        let activator = atmosOutputActivator ?? AtmosOutputActivator()
-        atmosOutputActivator = activator
-        activator.attach(to: player) { [weak self] _ in self?.nativeVideoSession?.audioIsAPAC == true }
         #endif
+    }
+
+    /// The software host's transport as the activator reads it: true while playing or about to (a seek,
+    /// the load's own start), false while paused, nil once the session has ended or failed.
+    nonisolated static func softwareAtmosOutputPlaying(_ state: PlaybackState) -> Bool? {
+        switch state {
+        case .playing, .seeking, .loading: return true
+        case .paused: return false
+        case .idle, .ended, .error: return nil
+        }
     }
 
     /// #597: a media services reset invalidates the activator's own `AVQueuePlayer` along with the engine's,

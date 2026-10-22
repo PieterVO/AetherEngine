@@ -62,6 +62,8 @@ public final class AetherEngine: ObservableObject {
             recomputePlaybackPhase()
             resolveLoadingStashedSeek(from: oldValue)
             settleOwedBackgroundAction()
+            // A renderer path has no player for the Atmos output activator to observe; it follows this.
+            atmosOutputActivator?.refresh()
             if let logTag { EngineLog.emit("[AetherEngine:\(logTag)] state=\(state)", category: .engine) }
         }
     }

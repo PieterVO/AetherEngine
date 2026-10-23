@@ -12,6 +12,22 @@ the public-API contract.
 
 ### Added
 
+- **3D on visionOS: MV-HEVC keeps its second view, and side-by-side / over-under HEVC plays as stereo (AE#812, thanks @williamliu0516).**
+  An MV-HEVC stream reached AVPlayer as plain `hvc1` (movenc writes `lhvC` only for a stream marked
+  `AV_DISPOSITION_MULTILAYER`, and the muxer's new stream had no disposition), so only the base view
+  was decoded. A frame-packed source now gets Apple's `vexu { eyes, pack }` in its init segment (the box
+  AVAssetWriter writes for `ViewPackingKind`), read back by AVFoundation as a side-by-side or over-under
+  stereo track, with no re-encode. Both declare `REQ-VIDEO-LAYOUT="CH-STEREO"` (EXT-X-VERSION 12).
+  `LoadOptions.stereoPresentation` (`.automatic` default: MV-HEVC and a container's declared packing;
+  `.sideBySide` / `.overUnder` for files that say so only in their name; `.mono`). Frame packing is
+  signalled on HEVC only: AVPlayer refuses a packed H.264 init over HLS (-12927), so H.264 plays 2D.
+  Other systems still play these files in 2D. Measured on the visionOS 27 simulator and macOS 27;
+  `aetherctl serve --stereo auto|mono|sbs|ou` serves a source as visionOS gets it.
+- **MV-HEVC decodes both views through the engine.** The AE#187 hvcC canonicalization dropped every SEI
+  array, including the three_dimensional_reference_displays_info SEI (payload 176) Apple's MV-HEVC writer
+  puts in the `hvcC`; without it AVFoundation decoded the base view alone despite `lhvC` and every layer-1
+  slice (one buffer for both eyes from `AVPlayerVideoOutput`; the left eye only on a Vision Pro). A
+  multiview session now keeps that SEI and still drops every other one.
 - **The software host (the Dolby Vision FEL route) can now show a Now-Playing card and answer remote
   commands.** It has no `AVPlayer`, so it had neither. With the new `ownsSoftwareNowPlaying` set (off by
   default, independent of `ownsVideoNowPlayingSession`), the engine publishes title, artwork, duration,
@@ -72,11 +88,13 @@ the public-API contract.
 
 ### Fixed
 
-- **The Atmos output activator runs on HDMI again.** 7.45.0's route rule (#834) compared the output
-  ports against `"HDMI"`, but `AVAudioSession.Port.HDMI` is `"HDMIOutput"`, so it matched no real
-  route and an Apple TV on HDMI logged `[AtmosOutputActivator] off on route ports=[HDMIOutput]`
-  beside an APAC programme. Sinks that need the silent Atmos stream to show Atmos for APAC were
-  left without it.
+- **A software live join starts picture and sound together (AE#844, thanks @l984-451).** A join reads
+  the source mid-GOP, and the clock armed on the first audio while the first picture only decoded at
+  the next keyframe: 1.3 to 2.9 s of sound over a black screen on every join, measured on an Apple TV
+  4K over Plex Live TV. The join now starts on the first keyframe. With a DVR ring the cursor moves
+  there and waits, at most 3 s, until the lead over the newest media stands where the unmoved start
+  had it (capped at the 2 s rebuffer resume lead); without one the audio read before that keyframe is
+  dropped. A stream that flags no keyframe keeps its old start after 3 s.
 
 ## [7.46.0] - 2026-10-22
 

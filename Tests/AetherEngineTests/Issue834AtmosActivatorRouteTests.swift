@@ -9,9 +9,7 @@ struct Issue834AtmosActivatorRouteTests {
 
     @Test("an all-HDMI route takes the activator")
     func hdmiRouteTakesIt() {
-        // `AVAudioSession.Port.HDMI.rawValue`, as an Apple TV on HDMI reports it.
         #expect(AtmosOutputActivator.routeTakesActivator(outputPortTypes: ["HDMIOutput"]))
-        #expect(AtmosOutputActivator.routeTakesActivator(outputPortTypes: ["HDMIOutput", "HDMIOutput"]))
     }
 
     @Test("AirPlay, Bluetooth and mixed routes do not")

@@ -555,7 +555,8 @@ extension AetherEngine {
         // real stall, without a status edge.
         host.$waitingReason
             .sink { [weak self] reason in
-                guard let self else { return }
+                // A cleared reason arrives just ahead of the status that ends the wait; that edge settles it.
+                guard let self, reason != nil else { return }
                 if case .error = self.state { return }
                 if self.state == .idle || self.state == .ended { return }
                 self.isBuffering = self.state == .playing
@@ -1655,7 +1656,8 @@ extension AetherEngine {
         // Sodalite#168: a resume's evaluation can turn into a real stall without a status edge.
         host.$waitingReason
             .sink { [weak self, weak host] reason in
-                guard let self, let host else { return }
+                // A cleared reason arrives just ahead of the status that ends the wait; that edge settles it.
+                guard let self, let host, reason != nil else { return }
                 let startedPlaying = self.state == .playing || self.state == .paused
                 self.isBuffering = startedPlaying
                     && Self.nativeWaitIsRebuffer(status: host.timeControlStatus, reason: reason)

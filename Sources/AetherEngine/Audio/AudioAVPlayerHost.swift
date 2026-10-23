@@ -245,10 +245,11 @@ final class AudioAVPlayerHost {
             }
         }
         waitingReasonObservation = avPlayer.observe(\.reasonForWaitingToPlay, options: [.new]) { [weak self] player, _ in
-            let reason = player.reasonForWaitingToPlay?.rawValue
+            // A cleared reason arrives just ahead of the status that ends the wait; that edge settles it.
+            guard let reason = player.reasonForWaitingToPlay?.rawValue else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.waitingReason = reason.map(AVPlayer.WaitingReason.init(rawValue:))
+                self.waitingReason = AVPlayer.WaitingReason(rawValue: reason)
                 self.refreshRebuffering()
             }
         }

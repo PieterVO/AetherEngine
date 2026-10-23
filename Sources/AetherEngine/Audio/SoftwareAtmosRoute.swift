@@ -81,6 +81,17 @@ enum SoftwareAtmosRoute: Equatable, Sendable {
         return nil
     }
 
+    /// Whether the renderer receives Dolby Atmos on this route, so `AtmosOutputActivator` may bring the
+    /// receiver to Dolby Atmos: compressed E-AC-3 JOC and TrueHD Atmos rendered to APAC are, DTS:X
+    /// rendered to APAC is not.
+    func carriesDolbyAtmos(sourceCodec: AVCodecID) -> Bool {
+        switch self {
+        case .pcm: return false
+        case .compressedEAC3JOC: return true
+        case .apac: return sourceCodec == AV_CODEC_ID_TRUEHD
+        }
+    }
+
     /// Packets of the source's head the JOC check may look at, and the bytes it may hold. The check
     /// needs one E-AC-3 access unit, which a muxed file interleaves within the first few packets;
     /// the byte budget keeps a late-starting track in a 4K remux from pinning the video before it.

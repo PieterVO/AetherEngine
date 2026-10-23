@@ -84,6 +84,14 @@ struct SoftwareAtmosRouteTests {
         #expect(route(codec: AV_CODEC_ID_AAC) == .pcm)
     }
 
+    @Test("only Dolby Atmos reaches the receiver as Dolby Atmos: TrueHD Atmos as APAC and JOC E-AC-3, not DTS:X")
+    func dolbyAtmosRoutes() {
+        #expect(SoftwareAtmosRoute.apac(.l714).carriesDolbyAtmos(sourceCodec: AV_CODEC_ID_TRUEHD))
+        #expect(SoftwareAtmosRoute.compressedEAC3JOC.carriesDolbyAtmos(sourceCodec: AV_CODEC_ID_EAC3))
+        #expect(!SoftwareAtmosRoute.apac(.l714).carriesDolbyAtmos(sourceCodec: AV_CODEC_ID_DTS))
+        #expect(!SoftwareAtmosRoute.pcm.carriesDolbyAtmos(sourceCodec: AV_CODEC_ID_TRUEHD))
+    }
+
     // MARK: - dec3
 
     /// The box AVFoundation's own format description carries for a 5.1 JOC stream.

@@ -45,8 +45,9 @@ the public-API contract.
   live streams and `.off` still decode to PCM, and a TrueHD or DTS track kept on PCM says why in the
   log. The automatic audio pick now prefers a TrueHD Atmos or DTS:X track on the software host too. A
   renderer error on these routes is logged in release builds. On tvOS the Atmos output activator
-  runs beside these routes on HDMI as it does beside the loopback route's APAC, so a sink that needs
-  it shows Atmos for the software host too. `audioDelivery` reports them as `.bridged` (APAC) and
+  runs on HDMI beside the routes that carry Dolby Atmos (TrueHD Atmos as APAC and compressed E-AC-3
+  JOC, not DTS:X), as it does beside the loopback route's TrueHD APAC, so a sink that needs it shows
+  Atmos for the software host too. `audioDelivery` reports them as `.bridged` (APAC) and
   `.streamCopy` (compressed E-AC-3 JOC), and `activeAudioDecoder` names them (for example
   "TRUEHD Atmos → APAC 7.1.4"); the PCM decode stays `.decoded`. The clock's "audio is not
   recovering" fallback waits for the APAC route's first buffer (about 100 TrueHD access units) instead
@@ -59,6 +60,13 @@ the public-API contract.
 
 ### Changed
 
+- **`AtmosOutputActivator` runs for TrueHD Atmos only.** A DTS:X track rendered to APAC no longer
+  loops the silent Dolby Atmos stream beside it, so the receiver does not show Dolby Atmos for a DTS
+  programme.
+- **Object size, snap and zone masks are built only into the `TrueHDReferenceRender` measurement
+  build.** The shipped TrueHD path already took every object as a point; the panner's size and snap
+  code and the element state's size, snap and zone fields are now compiled out of it as well. No
+  change to what a shipped build plays.
 - `setRate(0)` disarms the resume after an audio-session interruption on every path, as `pause()`
   does: a session the host set to rate 0 stays paused when the interruption ends.
 

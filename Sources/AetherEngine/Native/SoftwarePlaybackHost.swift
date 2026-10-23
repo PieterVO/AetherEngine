@@ -272,6 +272,8 @@ final class SoftwarePlaybackHost {
     private var audioDecoder: (any SoftwareAudioProducing)?
     /// How this session's audio reaches the renderer (`SoftwareAtmosRoute`), for the logs and the tests.
     private(set) var audioRoute: SoftwareAtmosRoute = .pcm
+    /// The route carries Dolby Atmos (`SoftwareAtmosRoute.carriesDolbyAtmos`), for `AtmosOutputActivator`.
+    private(set) var audioRouteCarriesDolbyAtmos = false
     /// The host's object-audio setting, set before `load`. Anything but `.off` lets Atmos tracks reach
     /// the renderer as Atmos instead of as the PCM decode of their core.
     var objectAudioRendering: ObjectAudioRendering = .off
@@ -1372,6 +1374,7 @@ final class SoftwarePlaybackHost {
                 guard !stopRequested else { made.producer.close(); return }
                 self.audioDecoder = made.producer
                 self.audioRoute = made.route
+                self.audioRouteCarriesDolbyAtmos = made.route.carriesDolbyAtmos(sourceCodec: acp.pointee.codec_id)
                 self.audioStreamIndex = resolvedAudioIdx
                 let atb = aStream.pointee.time_base
                 self.audioTimeBaseSeconds = atb.den > 0 ? Double(atb.num) / Double(atb.den) : 0

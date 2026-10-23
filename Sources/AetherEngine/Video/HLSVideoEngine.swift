@@ -586,6 +586,10 @@ public final class HLSVideoEngine: @unchecked Sendable {
     /// `AtmosOutputActivator` beside the player to reach the receiver as Atmos.
     var audioIsAPAC = false
 
+    /// The APAC track is TrueHD Atmos, not DTS:X: only then does `AtmosOutputActivator` bring the
+    /// receiver to Dolby Atmos, which a DTS programme is not.
+    var audioAPACIsFromDolbyAtmos = false
+
     /// The DTS:X decoder confirmed the playing track as DTS:X (#744), whatever FFmpeg's profile label said. The
     /// engine folds it into the published track's `isDTSX`.
     var audioIsConfirmedDTSX = false

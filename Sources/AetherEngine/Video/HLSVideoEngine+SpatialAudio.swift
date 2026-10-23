@@ -399,6 +399,7 @@ extension HLSVideoEngine {
                 : "DTS:X → APAC \(layout.rawValue)"
             audioDelivery = .bridged
             audioIsAPAC = true
+            audioAPACIsFromDolbyAtmos = source == .trueHDAtmos
             let rendering: String
             switch source {
             case .trueHDAtmos where TrueHDReferenceRender.isOn:
